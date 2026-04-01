@@ -171,6 +171,20 @@ class OrchestrationModule:
 
         return scenes
 
+    def _voiceover_duration(self, script: Script) -> float:
+        """Return duration of the combined voiceover WAV, or 0 if unavailable."""
+        combined = script.total_voiceover_path
+        if not combined:
+            return 0.0
+        p = Path(combined)
+        if not p.exists():
+            return 0.0
+        try:
+            from pydub import AudioSegment as _AS
+            return _AS.from_file(str(p)).duration_seconds
+        except Exception:
+            return 0.0
+
     # ------------------------------------------------------------------
     # Story 4.3 — Color grade assignment
     # ------------------------------------------------------------------
