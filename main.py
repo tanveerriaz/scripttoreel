@@ -10,6 +10,7 @@ Usage:
 """
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -146,8 +147,37 @@ def _print_status(project_id: str, projects_path: Path) -> None:
     console.print()
 
 
+def _check_dependencies(module_num: int) -> None:
+    """Exit early with a clear error if required binaries are missing."""
+    missing = []
+    for binary in ("ffmpeg", "ffprobe"):
+        if not shutil.which(binary):
+            missing.append(binary)
+    if missing:
+        console.print(f"[red]Error:[/red] Missing required binaries: {', '.join(missing)}")
+        console.print("Install ffmpeg: [bold]brew install ffmpeg[/bold]")
+        sys.exit(1)
+
+    # Ollama is only needed for Module 3, and only when OpenRouter is NOT configured
+    if module_num in (3,):
+        from src.utils.config_loader import load_api_keys as _load_keys
+        _keys = _load_keys()
+        _use_openrouter = _keys.get("USE_OPENROUTER", "").lower() == "true"
+        _has_or_key = bool(_keys.get("OPENROUTER_API_KEY", ""))
+        if not (_use_openrouter and _has_or_key):
+            import requests as _req
+            try:
+                _req.get("http://localhost:11434", timeout=3)
+            except Exception:
+                console.print("[red]Error:[/red] Ollama is not reachable at http://localhost:11434")
+                console.print("Start it with: [bold]ollama serve[/bold]")
+                console.print("Or configure OpenRouter in config/api_keys.env")
+                sys.exit(1)
+
+
 def _run_module(project_id: str, module_num: int, projects_path: Path) -> None:
     """Dispatch to the appropriate module runner."""
+    _check_dependencies(module_num)
     try:
         meta = load_project(project_id, projects_path)
     except FileNotFoundError as e:

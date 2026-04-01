@@ -264,14 +264,47 @@ class FreesoundClient(_BaseClient):
         )
         return [self._map_sound(s, query) for s in data.get("results", [])]
 
-    def _map_sound(self, s: dict, query: str) -> Asset:
+    def search_music(self, query: str, per_page: int = 3) -> list[Asset]:
+        """Search specifically for background music tracks (role=MUSIC, duration≥45s)."""
+        if not self.api_key:
+            logger.warning("FREESOUND_API_KEY not set — skipping Freesound music search")
+            return []
+        music_query = f"ambient background music {query}"
+        data = self._get(
+            f"{self.BASE_URL}/search/text/",
+            params={
+                "token": self.api_key,
+                "query": music_query,
+                "page_size": per_page,
+                "filter": "duration:[45 TO *]",  # at least 45 seconds
+                "fields": "id,name,duration,previews,license,username,tags,description",
+                "sort": "rating_desc",
+            },
+        )
+        results = data.get("results", [])
+        # Fallback: if nothing found with long-duration filter, try without
+        if not results:
+            data = self._get(
+                f"{self.BASE_URL}/search/text/",
+                params={
+                    "token": self.api_key,
+                    "query": "ambient background instrumental music",
+                    "page_size": per_page,
+                    "fields": "id,name,duration,previews,license,username,tags,description",
+                    "sort": "rating_desc",
+                },
+            )
+            results = data.get("results", [])
+        return [self._map_sound(s, music_query, role=AssetRole.MUSIC) for s in results]
+
+    def _map_sound(self, s: dict, query: str, role: AssetRole = AssetRole.SFX) -> Asset:
         previews = s.get("previews", {})
         url = previews.get("preview-hq-mp3") or previews.get("preview-lq-mp3")
         tags = s.get("tags", [])
         return Asset(
             id=f"freesound_{s['id']}",
             type=AssetType.AUDIO,
-            role=AssetRole.SFX,
+            role=role,
             source=AssetSource.FREESOUND,
             source_id=str(s["id"]),
             source_url=url,

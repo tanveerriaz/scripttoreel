@@ -190,14 +190,32 @@ class MetadataModule:
     def extract_audio_metadata(self, path: Path) -> AudioMetadata:
         if not path.exists():
             raise FileNotFoundError(path)
-        y, sr = librosa.load(str(path), sr=None, mono=True)
-        duration = float(librosa.get_duration(y=y, sr=sr))
+
+        import concurrent.futures
+        _LIBROSA_TIMEOUT = 30  # seconds
+
+        def _load_with_librosa():
+            y, sr = librosa.load(str(path), sr=None, mono=True)
+            duration = float(librosa.get_duration(y=y, sr=sr))
+            try:
+                tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+                bpm = float(tempo) if tempo else None
+            except Exception:
+                bpm = None
+            return duration, int(sr), bpm
+
         try:
-            tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-            bpm = float(tempo) if tempo else None
-        except Exception:
-            bpm = None
-        return AudioMetadata(duration_sec=round(duration, 3), sample_rate=int(sr), bpm=bpm)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(_load_with_librosa)
+                duration, sr, bpm = future.result(timeout=_LIBROSA_TIMEOUT)
+        except concurrent.futures.TimeoutError:
+            logger.warning("librosa.load() timed out for %s — returning default AudioMetadata", path)
+            return AudioMetadata()
+        except Exception as e:
+            logger.warning("librosa failed for %s: %s — returning default AudioMetadata", path, e)
+            return AudioMetadata()
+
+        return AudioMetadata(duration_sec=round(duration, 3), sample_rate=sr, bpm=bpm)
 
     # ------------------------------------------------------------------
     # Story 2.4 — Dominant color extraction (OpenCV K-means)

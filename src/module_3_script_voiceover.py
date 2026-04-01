@@ -79,7 +79,7 @@ class ScriptModule:
     # ------------------------------------------------------------------
 
     def generate_script_ollama(self, topic: str, duration_min: float) -> Script:
-        """POST to Ollama, retry up to 3x on bad JSON, return validated Script."""
+        """Generate script via OpenRouter (if configured) or local Ollama."""
         prompts = load_ollama_prompts()
         system_prompt = prompts["script_generation"]["system"]
         user_template = prompts["script_generation"]["user_template"]
@@ -90,47 +90,91 @@ class ScriptModule:
             duration_sec=duration_sec,
         )
 
-        payload = {
-            "model": self.ollama_model,
-            "prompt": f"{system_prompt}\n\n{user_prompt}",
-            "stream": False,
-            "options": {"temperature": 0.7, "num_predict": -1},
-        }
+        use_openrouter = self.api_keys.get("USE_OPENROUTER", "").lower() == "true"
+        or_key = self.api_keys.get("OPENROUTER_API_KEY", "")
+        or_model = self.api_keys.get("OPENROUTER_MODEL", "deepseek/deepseek-chat")
 
         last_error: Exception = Exception("Unknown error")
         for attempt in range(_MAX_LLM_RETRIES):
             try:
-                resp = requests.post(
-                    f"{self.ollama_url}/api/generate",
-                    json=payload,
-                    timeout=300,
-                )
-                resp.raise_for_status()
-                raw_text = resp.json().get("response", "")
+                if use_openrouter and or_key:
+                    raw_text = self._call_openrouter(system_prompt, user_prompt, or_key, or_model)
+                else:
+                    raw_text = self._call_ollama(system_prompt, user_prompt)
                 return self.parse_script_json(raw_text)
-            except requests.ConnectionError as e:
-                raise OllamaNotAvailableError(
-                    f"Cannot connect to Ollama at {self.ollama_url}. "
-                    "Is it running? Start with: ollama serve"
-                ) from e
+            except OllamaNotAvailableError:
+                raise
             except (json.JSONDecodeError, ValueError, KeyError) as e:
                 last_error = e
-                logger.warning("Attempt %d: bad JSON from Ollama: %s", attempt + 1, e)
+                logger.warning("Attempt %d: bad JSON from LLM: %s", attempt + 1, e)
                 continue
 
         raise last_error
+
+    def _call_openrouter(
+        self, system_prompt: str, user_prompt: str, api_key: str, model: str
+    ) -> str:
+        """Call OpenRouter chat completions API (OpenAI-compatible)."""
+        logger.info("Using OpenRouter model: %s", model)
+        resp = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://videoforge.local",
+                "X-Title": "VideoForge",
+            },
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "temperature": 0.7,
+                "max_tokens": 4096,
+            },
+            timeout=120,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data["choices"][0]["message"]["content"]
+
+    def _call_ollama(self, system_prompt: str, user_prompt: str) -> str:
+        """Call local Ollama generate API."""
+        try:
+            resp = requests.post(
+                f"{self.ollama_url}/api/generate",
+                json={
+                    "model": self.ollama_model,
+                    "prompt": f"{system_prompt}\n\n{user_prompt}",
+                    "stream": False,
+                    "options": {"temperature": 0.7, "num_predict": -1},
+                },
+                timeout=300,
+            )
+            resp.raise_for_status()
+            return resp.json().get("response", "")
+        except requests.ConnectionError as e:
+            raise OllamaNotAvailableError(
+                f"Cannot connect to Ollama at {self.ollama_url}. "
+                "Is it running? Start with: ollama serve"
+            ) from e
 
     def parse_script_json(self, raw_text: str) -> Script:
         """Extract JSON from LLM response, validate with Pydantic."""
         # Strip markdown code fences if present
         text = re.sub(r"```(?:json)?\s*", "", raw_text).strip()
-        # Find first { ... } block
-        start = text.find("{")
-        end = text.rfind("}")
-        if start == -1 or end == -1:
-            raise ValueError(f"No JSON object found in LLM response: {raw_text[:200]!r}")
-        json_str = text[start : end + 1]
-        data = json.loads(json_str)
+
+        # Fast path: try direct parse first (LLM returned clean JSON)
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            # Fallback: find the first { ... } block (handles leading/trailing prose)
+            start = text.find("{")
+            end = text.rfind("}")
+            if start == -1 or end == -1:
+                raise ValueError(f"No JSON object found in LLM response: {raw_text[:200]!r}")
+            data = json.loads(text[start : end + 1])
 
         # Normalise top-level enum fields (LLM may output "dark|mysterious" style)
         _VALID_MOODS = {"dark", "mysterious", "uplifting", "dramatic", "educational",
@@ -163,10 +207,17 @@ class ScriptModule:
     _PIPER_MODEL = Path(__file__).parent.parent / "models" / "piper" / "en_US-lessac-high.onnx"
 
     def generate_voiceover_segment(self, text: str, segment_id: int) -> Path:
-        """Generate WAV for one segment. Tries piper → macOS say."""
+        """Generate WAV for one segment. Tries piper → macOS say → silence."""
         out = self._audio_dir / f"voiceover_{segment_id}.wav"
         if out.exists() and out.stat().st_size > 1000:
             return out
+
+        # Skip TTS for empty or whitespace-only text — write 500ms silence instead
+        if not text or not text.strip():
+            logger.warning("Segment %d has empty text — writing silence", segment_id)
+            AudioSegment.silent(duration=500).export(str(out), format="wav")
+            return out
+
         try:
             self._piper_tts(text, out)
         except Exception as e:
@@ -175,7 +226,13 @@ class ScriptModule:
         return out
 
     def _piper_tts(self, text: str, out_path: Path) -> None:
-        """Generate audio with piper-tts (high-quality neural TTS)."""
+        """Generate audio with piper-tts (high-quality neural TTS).
+
+        Tuning notes:
+          --length-scale 1.1   Slightly slower → more natural pacing
+          --noise-scale  0.667 Expressiveness (default); increase for more variation
+          --noise-w-scale 0.8  Phoneme duration variation; keeps rhythm natural
+        """
         model = self._PIPER_MODEL
         if not model.exists():
             raise FileNotFoundError(f"Piper model not found: {model}")
@@ -183,7 +240,15 @@ class ScriptModule:
         if not piper_bin:
             raise RuntimeError("`piper` command not found")
         result = subprocess.run(
-            [piper_bin, "-m", str(model), "-f", str(out_path)],
+            [
+                piper_bin,
+                "-m", str(model),
+                "-f", str(out_path),
+                "--length-scale", "1.1",    # 10% slower → less rushed
+                "--noise-scale", "0.667",   # natural expressiveness
+                "--noise-w-scale", "0.8",   # stable phoneme timing
+                "--sentence-silence", "0.3", # 300ms pause between sentences
+            ],
             input=text,
             capture_output=True,
             text=True,
@@ -196,15 +261,29 @@ class ScriptModule:
         if not shutil.which("say"):
             raise RuntimeError("`say` command not found — not on macOS?")
 
+        # Daniel (en_GB) and Samantha are the clearest macOS voices.
+        # Rate 175 wpm sounds natural for documentary-style narration.
         aiff = out_path.with_suffix(".aiff")
+        voice = "Samantha"
+        for candidate in ("Daniel", "Samantha"):
+            result = subprocess.run(
+                ["say", "-v", "?"], capture_output=True, text=True
+            )
+            if candidate in result.stdout:
+                voice = candidate
+                break
+
         subprocess.run(
-            ["say", "-v", "Samantha", "-r", "150", "-o", str(aiff), text],
+            ["say", "-v", voice, "-r", "175", "-o", str(aiff), text],
             check=True,
             capture_output=True,
         )
-        # Convert AIFF → WAV via ffmpeg
+        # Convert AIFF → WAV, upsample to 22050 Hz mono for consistency with piper
         subprocess.run(
-            ["ffmpeg", "-y", "-i", str(aiff), "-ar", "22050", "-ac", "1", str(out_path)],
+            ["ffmpeg", "-y", "-i", str(aiff),
+             "-ar", "22050", "-ac", "1",
+             "-af", "highpass=f=80,lowpass=f=8000",  # gentle EQ to reduce tinny quality
+             str(out_path)],
             check=True,
             capture_output=True,
         )

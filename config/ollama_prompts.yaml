@@ -1,38 +1,44 @@
 script_generation:
   system: |
-    You are a professional video scriptwriter specializing in engaging short-form documentary content.
-    Your scripts are vivid, atmospheric, and perfectly timed for voiceover narration.
-    Always respond with valid JSON only — no markdown, no extra text.
+    You are a professional video scriptwriter and stock footage researcher.
+    You write vivid, atmospheric documentary narration AND generate highly specific stock footage search keywords.
+    Always respond with valid JSON only — no markdown, no extra text, no trailing commas.
 
   user_template: |
     Write a {duration}-minute video script about: "{topic}"
 
-    Return a JSON object with this exact structure (replace example values with real ones):
+    CRITICAL KEYWORD RULES — read carefully:
+    - b_roll_keywords: Must be SPECIFIC to "{topic}". Think like a stock footage librarian.
+      BAD (too generic): ["technology", "future", "people"]
+      GOOD (specific example for "Haunted Places in Pakistan"): ["Pakistan ancient fort", "Lahore Mughal architecture", "abandoned mansion Pakistan", "dark corridor stone walls", "moonlit cemetery Asia"]
+      GOOD (specific example for "Rise of Agentic AI"): ["robot arm automation factory", "neural network visualization", "autonomous vehicle sensor", "AI chip circuit board closeup", "computer vision camera grid"]
+    - visual_cues: Describe what should appear on screen frame-by-frame, very specific.
+    - Never use placeholder or generic terms like "technology", "science", "business", "people", "nature".
+    - If the topic mentions a country, city, or place — include it in the keywords (e.g. "Pakistan landscape", "Lahore street", "Islamabad skyline").
+
+    Return ONLY this JSON structure — fill ALL fields with content specific to "{topic}":
     {{
-      "title": "Video title",
+      "title": "Compelling title for: {topic}",
       "topic": "{topic}",
       "duration_sec": {duration_sec},
       "mood": "educational",
       "visual_style": "documentary",
-      "color_palette": ["#1a1a2e", "#16213e", "#0f3460"],
+      "color_palette": ["#hex1", "#hex2", "#hex3"],
       "segments": [
         {{
           "id": 1,
           "type": "intro",
-          "text": "Voiceover narration text here...",
-          "duration_sec": 8,
-          "visual_cues": ["futuristic interface", "glowing network", "digital world"],
-          "mood_tags": ["dramatic", "atmospheric"],
-          "b_roll_keywords": ["artificial intelligence", "technology", "future"],
-          "sfx_cues": ["ambient hum"],
-          "music_cues": ["ambient drone"],
-          "transitions": {{
-            "in": "fade_in",
-            "out": "dissolve"
-          }},
+          "text": "Engaging opening narration about {topic}...",
+          "duration_sec": 10,
+          "visual_cues": ["specific visual description 1", "specific visual description 2"],
+          "mood_tags": ["dramatic"],
+          "b_roll_keywords": ["SPECIFIC keyword 1 for {topic}", "SPECIFIC keyword 2", "SPECIFIC keyword 3"],
+          "sfx_cues": ["relevant ambient sound"],
+          "music_cues": ["ambient"],
+          "transitions": {{"in": "fade_in", "out": "dissolve"}},
           "text_overlay": {{
             "enabled": true,
-            "text": "The Rise of Agentic AI",
+            "text": "Title text here",
             "position": "bottom_third",
             "style": "lower_third",
             "start_time": 0.0
@@ -43,20 +49,16 @@ script_generation:
       "overall_pacing": "medium"
     }}
 
-    IMPORTANT RULES:
-    - mood must be exactly one of: dark, mysterious, uplifting, dramatic, educational, horror, neutral, suspenseful, melancholic
-    - type must be exactly one of: intro, narration, transition, outro
-    - background_music_style must be exactly one of: ambient, dramatic, uplifting, suspenseful
-    - overall_pacing must be exactly one of: slow, medium, fast
-    - Use ONLY valid JSON — no comments, no trailing commas, no pipe characters
-
-    Requirements:
-    - Total duration of all segments must equal {duration_sec} seconds
-    - Create 3-5 natural segments (keep it concise for short videos)
-    - First segment is always "intro" with text overlay enabled
-    - Last segment is always "outro"
-    - Visual cues must be specific and searchable as stock footage terms
-    - Make the narration atmospheric and engaging
+    STRICT RULES:
+    - mood: exactly one of: dark, mysterious, uplifting, dramatic, educational, horror, neutral, suspenseful, melancholic
+    - type: exactly one of: intro, narration, transition, outro
+    - background_music_style: exactly one of: ambient, dramatic, uplifting, suspenseful
+    - overall_pacing: exactly one of: slow, medium, fast
+    - Total duration of ALL segments combined must equal exactly {duration_sec} seconds
+    - Create 4-6 segments: start with "intro", end with "outro", no empty text fields
+    - First segment "intro" MUST have text_overlay enabled with a relevant title
+    - Every segment MUST have non-empty text narration
+    - b_roll_keywords: 4-6 per segment, ALL must be specific to the topic "{topic}"
 
 asset_search_keywords:
   system: |

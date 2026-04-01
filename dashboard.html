@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>VideoForge — AI Video Generator</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0d0f14;
+    --surface: #161b26;
+    --border: #252d3d;
+    --accent: #6366f1;
+    --accent-dim: #4f52c9;
+    --green: #22c55e;
+    --red: #ef4444;
+    --yellow: #eab308;
+    --text: #e2e8f0;
+    --muted: #64748b;
+    --radius: 12px;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh;
+    padding: 24px;
+  }
+
+  header {
+    text-align: center;
+    margin-bottom: 40px;
+  }
+
+  header h1 {
+    font-size: 2.2rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, #6366f1, #a855f7, #ec4899);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    letter-spacing: -0.5px;
+  }
+
+  header p {
+    color: var(--muted);
+    margin-top: 6px;
+    font-size: 0.95rem;
+  }
+
+  .container {
+    max-width: 860px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+
+  /* ── Card ── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px;
+  }
+
+  .card h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 18px;
+  }
+
+  /* ── Form ── */
+  .form-row {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .form-group.grow { flex: 1; min-width: 240px; }
+
+  label { font-size: 0.85rem; color: var(--muted); font-weight: 500; }
+
+  input, select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 0.95rem;
+    padding: 10px 14px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  input:focus, select:focus { border-color: var(--accent); }
+  input::placeholder { color: var(--muted); }
+
+  select option { background: var(--surface); }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 11px 24px;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: opacity 0.2s, transform 0.1s;
+    white-space: nowrap;
+  }
+
+  .btn:active { transform: scale(0.97); }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+    align-self: flex-end;
+  }
+
+  .btn-primary:hover:not(:disabled) { background: var(--accent-dim); }
+
+  .btn-download {
+    background: var(--green);
+    color: #000;
+    font-weight: 700;
+    font-size: 1rem;
+    padding: 13px 32px;
+  }
+
+  /* ── Pipeline Steps ── */
+  .steps {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .step {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 13px 16px;
+    border-radius: 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    transition: background 0.3s, border-color 0.3s;
+  }
+
+  .step.active {
+    background: #1e1b4b;
+    border-color: var(--accent);
+  }
+
+  .step.complete {
+    background: #052e16;
+    border-color: #166534;
+  }
+
+  .step.failed {
+    background: #2d0a0a;
+    border-color: #7f1d1d;
+  }
+
+  .step-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.85rem;
+    font-weight: 700;
+    flex-shrink: 0;
+    background: var(--border);
+    color: var(--muted);
+    transition: background 0.3s, color 0.3s;
+  }
+
+  .step.active .step-icon {
+    background: var(--accent);
+    color: #fff;
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+
+  .step.complete .step-icon { background: var(--green); color: #000; }
+  .step.failed .step-icon { background: var(--red); color: #fff; }
+
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(99,102,241,0.5); }
+    50% { box-shadow: 0 0 0 8px rgba(99,102,241,0); }
+  }
+
+  .step-info { flex: 1; }
+  .step-name { font-size: 0.9rem; font-weight: 600; }
+  .step-label { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+
+  .step-badge {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 999px;
+  }
+
+  .badge-pending  { background: #1e293b; color: var(--muted); }
+  .badge-running  { background: #312e81; color: #a5b4fc; }
+  .badge-complete { background: #14532d; color: #86efac; }
+  .badge-failed   { background: #7f1d1d; color: #fca5a5; }
+
+  /* ── Progress bar ── */
+  .progress-wrap {
+    background: var(--bg);
+    border-radius: 999px;
+    height: 6px;
+    overflow: hidden;
+    margin-top: 4px;
+  }
+
+  .progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), #a855f7);
+    border-radius: 999px;
+    transition: width 0.6s ease;
+  }
+
+  /* ── Log ── */
+  .log-box {
+    background: #0a0c10;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Menlo', monospace;
+    font-size: 0.78rem;
+    line-height: 1.6;
+    max-height: 240px;
+    overflow-y: auto;
+    color: #94a3b8;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
+  .log-line-success { color: #86efac; }
+  .log-line-error   { color: #fca5a5; }
+  .log-line-info    { color: #93c5fd; }
+
+  /* ── Result ── */
+  .result-box {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 18px;
+    padding: 32px;
+    text-align: center;
+  }
+
+  .result-box.visible { display: flex; }
+
+  .result-emoji { font-size: 3.5rem; }
+
+  .result-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--green);
+  }
+
+  .result-meta {
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+
+  /* ── Projects table ── */
+  .proj-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+
+  .proj-table th {
+    text-align: left;
+    padding: 8px 12px;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+    font-weight: 500;
+  }
+
+  .proj-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid #1a2033;
+    vertical-align: middle;
+  }
+
+  .proj-table tr:last-child td { border-bottom: none; }
+
+  .proj-table tr:hover td { background: #111827; }
+
+  .pill {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+  }
+
+  .pill-green { background: #14532d; color: #86efac; }
+  .pill-gray  { background: #1e293b; color: var(--muted); }
+
+  .link-btn {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 0.78rem;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: border-color 0.2s;
+  }
+
+  .link-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ── Error banner ── */
+  .error-banner {
+    display: none;
+    background: #2d0a0a;
+    border: 1px solid #7f1d1d;
+    border-radius: 8px;
+    padding: 12px 16px;
+    color: #fca5a5;
+    font-size: 0.88rem;
+  }
+
+  .error-banner.visible { display: block; }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⚡ VideoForge</h1>
+  <p>Local AI video generation — Ollama · FFmpeg · Pexels · Piper TTS</p>
+</header>
+
+<div class="container">
+
+  <!-- Generate Form -->
+  <div class="card">
+    <h2>Generate New Video</h2>
+    <div class="form-row">
+      <div class="form-group grow">
+        <label for="topic">Topic</label>
+        <input id="topic" type="text" placeholder="e.g. The Rise of Agentic AI" />
+      </div>
+      <div class="form-group">
+        <label for="duration">Duration (minutes)</label>
+        <select id="duration">
+          <option value="0.5">30 seconds</option>
+          <option value="1">1 minute</option>
+          <option value="2">2 minutes</option>
+          <option value="3" selected>3 minutes</option>
+          <option value="5">5 minutes</option>
+          <option value="10">10 minutes</option>
+        </select>
+      </div>
+      <div class="form-group" style="justify-content: flex-end;">
+        <label>&nbsp;</label>
+        <button class="btn btn-primary" id="generateBtn" onclick="startGeneration()">
+          <span>🎬</span> Generate
+        </button>
+      </div>
+    </div>
+    <div class="error-banner" id="errorBanner"></div>
+  </div>
+
+  <!-- Pipeline Progress -->
+  <div class="card" id="progressCard" style="display:none">
+    <h2>Pipeline Progress</h2>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 14px;">
+      <span id="progressLabel" style="font-size:0.88rem; color:var(--muted)">Initializing…</span>
+      <span id="progressPct" style="font-size:0.88rem; font-weight:600; color:var(--accent)">0%</span>
+    </div>
+    <div class="progress-wrap" style="margin-bottom: 20px;">
+      <div class="progress-bar" id="progressBar" style="width:0%"></div>
+    </div>
+
+    <div class="steps" id="stepsContainer">
+      <!-- injected by JS -->
+    </div>
+
+    <!-- Result -->
+    <div class="result-box" id="resultBox">
+      <div class="result-emoji">🎉</div>
+      <div class="result-title">Video Ready!</div>
+      <div class="result-meta" id="resultMeta"></div>
+      <a id="downloadLink" href="#" class="btn btn-download" download>
+        ⬇ Download MP4
+      </a>
+    </div>
+  </div>
+
+  <!-- Log -->
+  <div class="card" id="logCard" style="display:none">
+    <h2>Live Log</h2>
+    <div class="log-box" id="logBox"></div>
+  </div>
+
+  <!-- Recent Projects -->
+  <div class="card">
+    <h2>Recent Projects</h2>
+    <div id="projectsContainer">
+      <div style="color:var(--muted); font-size:0.85rem;">Loading…</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const MODULE_LABELS = [
+  "",
+  "Research & Asset Discovery",
+  "Metadata Extraction",
+  "Script & Voiceover",
+  "Scene Orchestration",
+  "FFmpeg Rendering",
+  "Quality Validation",
+];
+
+const MODULE_DESCS = [
+  "",
+  "Searching Pexels, Pixabay, Unsplash, Freesound",
+  "Extracting ffprobe / Pillow / librosa metadata",
+  "Generating script with Ollama + Piper TTS",
+  "Matching assets to scenes, planning timeline",
+  "Rendering H.264 1080p with VideoToolbox",
+  "Running 10 quality checks, embedding metadata",
+];
+
+let _sse = null;
+let _projectId = null;
+
+function showError(msg) {
+  const el = document.getElementById("errorBanner");
+  el.textContent = msg;
+  el.classList.add("visible");
+}
+
+function hideError() {
+  document.getElementById("errorBanner").classList.remove("visible");
+}
+
+function buildSteps() {
+  const container = document.getElementById("stepsContainer");
+  container.innerHTML = "";
+  for (let i = 1; i <= 6; i++) {
+    const div = document.createElement("div");
+    div.className = "step";
+    div.id = `step-${i}`;
+    div.innerHTML = `
+      <div class="step-icon" id="step-icon-${i}">${i}</div>
+      <div class="step-info">
+        <div class="step-name">${MODULE_LABELS[i]}</div>
+        <div class="step-label">${MODULE_DESCS[i]}</div>
+      </div>
+      <span class="step-badge badge-pending" id="step-badge-${i}">pending</span>
+    `;
+    container.appendChild(div);
+  }
+}
+
+function updateStep(num, status) {
+  const step = document.getElementById(`step-${num}`);
+  const icon = document.getElementById(`step-icon-${num}`);
+  const badge = document.getElementById(`step-badge-${num}`);
+  if (!step) return;
+
+  step.className = "step";
+  badge.className = "step-badge";
+
+  if (status === "running") {
+    step.classList.add("active");
+    badge.classList.add("badge-running");
+    badge.textContent = "running";
+    icon.textContent = "⟳";
+  } else if (status === "complete") {
+    step.classList.add("complete");
+    badge.classList.add("badge-complete");
+    badge.textContent = "complete";
+    icon.textContent = "✓";
+  } else if (status === "failed") {
+    step.classList.add("failed");
+    badge.classList.add("badge-failed");
+    badge.textContent = "failed";
+    icon.textContent = "✗";
+  } else {
+    badge.classList.add("badge-pending");
+    badge.textContent = "pending";
+    icon.textContent = num;
+  }
+}
+
+function updateProgress(currentModule, moduleStatuses) {
+  const done = Object.values(moduleStatuses).filter(s => s === "complete").length;
+  const pct = Math.round((done / 6) * 100);
+  document.getElementById("progressBar").style.width = pct + "%";
+  document.getElementById("progressPct").textContent = pct + "%";
+
+  if (currentModule >= 1 && currentModule <= 6) {
+    document.getElementById("progressLabel").textContent =
+      `Module ${currentModule}: ${MODULE_LABELS[currentModule]}`;
+  }
+
+  for (let i = 1; i <= 6; i++) {
+    const s = moduleStatuses[i];
+    if (s) {
+      updateStep(i, s);
+    } else if (i === currentModule) {
+      updateStep(i, "running");
+    }
+  }
+}
+
+function appendLog(lines) {
+  const box = document.getElementById("logBox");
+  lines.forEach(line => {
+    const span = document.createElement("div");
+    if (line.includes("✅") || line.includes("complete") || line.includes("🎉")) {
+      span.className = "log-line-success";
+    } else if (line.includes("❌") || line.includes("Error") || line.includes("failed")) {
+      span.className = "log-line-error";
+    } else if (line.includes("▶") || line.includes("Module") || line.includes("Running")) {
+      span.className = "log-line-info";
+    }
+    span.textContent = line;
+    box.appendChild(span);
+  });
+  box.scrollTop = box.scrollHeight;
+}
+
+async function startGeneration() {
+  const topic = document.getElementById("topic").value.trim();
+  const duration = parseFloat(document.getElementById("duration").value);
+  hideError();
+
+  if (!topic) { showError("Please enter a topic."); return; }
+
+  const btn = document.getElementById("generateBtn");
+  btn.disabled = true;
+  btn.textContent = "Starting…";
+
+  // Reset UI
+  document.getElementById("progressCard").style.display = "block";
+  document.getElementById("logCard").style.display = "block";
+  document.getElementById("resultBox").classList.remove("visible");
+  document.getElementById("logBox").innerHTML = "";
+  document.getElementById("progressBar").style.width = "0%";
+  document.getElementById("progressPct").textContent = "0%";
+  document.getElementById("progressLabel").textContent = "Initializing…";
+  buildSteps();
+
+  if (_sse) { _sse.close(); _sse = null; }
+
+  // POST /api/generate
+  let res;
+  try {
+    res = await fetch("/api/generate", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({topic, duration}),
+    });
+  } catch (e) {
+    showError("Cannot reach server. Is server.py running?");
+    btn.disabled = false;
+    btn.innerHTML = "<span>🎬</span> Generate";
+    return;
+  }
+
+  const data = await res.json();
+  if (!res.ok || data.error) {
+    showError(data.error || "Server error");
+    btn.disabled = false;
+    btn.innerHTML = "<span>🎬</span> Generate";
+    return;
+  }
+
+  _projectId = data.project_id;
+  btn.textContent = "Generating…";
+
+  // Subscribe to SSE
+  _sse = new EventSource(`/api/status/${_projectId}`);
+  _sse.onmessage = (e) => {
+    const payload = JSON.parse(e.data);
+
+    if (payload.log && payload.log.length) appendLog(payload.log);
+    updateProgress(payload.current_module, payload.module_statuses || {});
+
+    if (payload.done) {
+      _sse.close();
+      _sse = null;
+      btn.disabled = false;
+      btn.innerHTML = "<span>🎬</span> Generate";
+      document.getElementById("progressBar").style.width = "100%";
+      document.getElementById("progressPct").textContent = "100%";
+
+      if (payload.success) {
+        document.getElementById("progressLabel").textContent = "✅ Complete!";
+        const resultBox = document.getElementById("resultBox");
+        const dl = document.getElementById("downloadLink");
+        dl.href = `/api/video/${_projectId}`;
+        dl.download = `${_projectId}.mp4`;
+        document.getElementById("resultMeta").textContent =
+          `Topic: ${topic} · ${duration} min`;
+        resultBox.classList.add("visible");
+      } else {
+        document.getElementById("progressLabel").textContent = "❌ Failed";
+        showError(payload.error || "Pipeline failed. Check the log for details.");
+      }
+      loadProjects();
+    }
+  };
+
+  _sse.onerror = () => {
+    appendLog(["[SSE] Connection lost — retrying…"]);
+  };
+}
+
+// ── Projects Table ──
+
+async function loadProjects() {
+  const res = await fetch("/api/projects");
+  const projects = await res.json();
+  const container = document.getElementById("projectsContainer");
+
+  if (!projects.length) {
+    container.innerHTML = `<div style="color:var(--muted);font-size:0.85rem;">No projects yet.</div>`;
+    return;
+  }
+
+  const rows = projects.slice().reverse().map(p => {
+    const date = p.created_at ? p.created_at.slice(0, 10) : "—";
+    const badge = p.has_video
+      ? `<span class="pill pill-green">✓ Ready</span>`
+      : `<span class="pill pill-gray">In progress</span>`;
+    const dlBtn = p.has_video
+      ? `<a href="/api/video/${p.id}" download="${p.id}.mp4" class="link-btn">⬇ Download</a>`
+      : `<span style="color:var(--muted);font-size:0.78rem;">—</span>`;
+    return `
+      <tr>
+        <td>${p.topic}</td>
+        <td>${p.duration_min} min</td>
+        <td>${date}</td>
+        <td>${badge}</td>
+        <td>${dlBtn}</td>
+      </tr>`;
+  }).join("");
+
+  container.innerHTML = `
+    <table class="proj-table">
+      <thead>
+        <tr>
+          <th>Topic</th>
+          <th>Duration</th>
+          <th>Created</th>
+          <th>Status</th>
+          <th>Download</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// Init
+loadProjects();
+setInterval(loadProjects, 15000);
+</script>
+</body>
+</html>

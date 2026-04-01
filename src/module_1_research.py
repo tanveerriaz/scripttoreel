@@ -53,27 +53,41 @@ class ResearchModule:
         topic = meta.get("topic", "")
         logger.info("Module 1: researching topic %r", topic)
 
+        # Build a diverse set of search queries — topic + extracted sub-queries
+        # Also incorporate B-roll keywords from script.json if already generated
+        queries = self._build_search_queries(topic)
+        logger.info("Search queries: %s", queries)
+
         all_assets: list[Asset] = []
+        seen_ids: set = set()  # deduplicate across queries
 
-        # --- Pexels ---
-        pexels = PexelsClient(self.api_keys.get("PEXELS_API_KEY"))
-        all_assets.extend(self._safe_search(pexels.search_videos, topic, "Pexels videos"))
-        all_assets.extend(self._safe_search(pexels.search_images, topic, "Pexels images"))
+        def _add(assets):
+            for a in assets:
+                if a.id not in seen_ids:
+                    seen_ids.add(a.id)
+                    all_assets.append(a)
 
-        # --- Pixabay ---
+        pexels  = PexelsClient(self.api_keys.get("PEXELS_API_KEY"))
         pixabay = PixabayClient(self.api_keys.get("PIXABAY_API_KEY"))
-        all_assets.extend(self._safe_search(pixabay.search_videos, topic, "Pixabay videos"))
-        all_assets.extend(self._safe_search(pixabay.search_images, topic, "Pixabay images"))
-
-        # --- Unsplash ---
         unsplash = UnsplashClient(self.api_keys.get("UNSPLASH_ACCESS_KEY"))
-        all_assets.extend(self._safe_search(unsplash.search_photos, topic, "Unsplash photos"))
-
-        # --- Freesound ---
         freesound = FreesoundClient(self.api_keys.get("FREESOUND_API_KEY"))
-        all_assets.extend(self._safe_search(freesound.search_sounds, topic, "Freesound audio"))
 
-        logger.info("Found %d assets total; starting downloads", len(all_assets))
+        for q in queries:
+            _add(self._safe_search(pexels.search_videos,  q, f"Pexels videos [{q}]"))
+            _add(self._safe_search(pexels.search_images,  q, f"Pexels images [{q}]"))
+            _add(self._safe_search(pixabay.search_videos, q, f"Pixabay videos [{q}]"))
+            _add(self._safe_search(pixabay.search_images, q, f"Pixabay images [{q}]"))
+            _add(self._safe_search(unsplash.search_photos, q, f"Unsplash [{q}]"))
+
+        # SFX: ambient sounds for scene atmosphere
+        _add(self._safe_search(freesound.search_sounds, topic, "Freesound SFX"))
+        if len(queries) > 1:
+            _add(self._safe_search(freesound.search_sounds, queries[1], f"Freesound SFX [{queries[1]}]"))
+
+        # Background music: dedicated search — longer tracks tagged role=MUSIC
+        _add(self._safe_search(freesound.search_music, topic, "Freesound music"))
+
+        logger.info("Found %d unique assets total; starting downloads", len(all_assets))
 
         # Download all assets
         downloaded: list[Asset] = []
@@ -87,6 +101,52 @@ class ResearchModule:
         self._update_status(ModuleStatus.COMPLETE, total_assets=len(downloaded))
 
         return downloaded
+
+    # ------------------------------------------------------------------
+    # Search query building
+    # ------------------------------------------------------------------
+
+    def _build_search_queries(self, topic: str) -> list[str]:
+        """Return 2-4 specific search queries derived from the topic.
+
+        Priority order:
+        1. B-roll keywords from script.json (if Module 3 already ran — re-runs)
+        2. Key noun phrases extracted from the topic
+        3. The raw topic as fallback
+        """
+        queries: list[str] = []
+
+        # 1. Pull B-roll keywords from existing script.json (re-runs)
+        script_path = self.project_dir / "script.json"
+        if script_path.exists():
+            try:
+                script_data = json.loads(script_path.read_text())
+                kw_set: dict[str, None] = {}  # ordered dedup
+                for seg in script_data.get("segments", []):
+                    for kw in seg.get("b_roll_keywords", []):
+                        kw = kw.strip()
+                        if kw and kw.lower() not in ("technology", "science", "people",
+                                                       "nature", "business", "future",
+                                                       "innovation", "modern"):
+                            kw_set[kw] = None
+                if kw_set:
+                    # Take up to 3 distinct keywords as separate queries
+                    queries = list(kw_set.keys())[:3]
+                    logger.info("Using %d B-roll keywords from script.json", len(queries))
+            except Exception as e:
+                logger.warning("Could not read script.json for keywords: %s", e)
+
+        # 2. Extract specific terms from the topic itself
+        topic_queries = _topic_to_queries(topic)
+        for q in topic_queries:
+            if q not in queries:
+                queries.append(q)
+
+        # 3. Ensure the raw topic is always searched
+        if topic not in queries:
+            queries.insert(0, topic)
+
+        return queries[:4]  # cap at 4 to avoid excessive API calls
 
     # ------------------------------------------------------------------
     # Search helpers
@@ -208,3 +268,41 @@ def _guess_extension(url: str, asset_type: AssetType) -> str:
         AssetType.SFX: ".mp3",
     }
     return defaults.get(asset_type, ".bin")
+
+
+def _topic_to_queries(topic: str) -> list[str]:
+    """Derive 2-3 specific search queries from the topic string.
+
+    Strategy:
+    - Extract country/city names for location-specific searches
+    - Remove stop words and short words to get content nouns
+    - Build focused compound queries
+    """
+    # Common stop words to filter
+    _STOPS = {
+        "the", "a", "an", "of", "in", "on", "at", "to", "for", "and", "or",
+        "but", "is", "are", "was", "were", "be", "been", "being", "have",
+        "has", "had", "do", "does", "did", "will", "would", "could", "should",
+        "may", "might", "shall", "can", "about", "with", "from", "by", "as",
+        "its", "their", "our", "my", "your", "this", "that", "these", "those",
+        "how", "what", "when", "where", "why", "who", "rise", "rise", "story",
+        "history", "world", "guide", "complete", "top", "best",
+    }
+
+    words = topic.split()
+    # Content words (4+ chars, not stop words)
+    content_words = [w for w in words if len(w) >= 4 and w.lower() not in _STOPS]
+
+    queries: list[str] = []
+
+    # Pair first two content words for a compound query
+    if len(content_words) >= 2:
+        queries.append(f"{content_words[0]} {content_words[1]}")
+    elif content_words:
+        queries.append(content_words[0])
+
+    # Add each remaining content word as a standalone query
+    for w in content_words[2:4]:
+        queries.append(w)
+
+    return queries

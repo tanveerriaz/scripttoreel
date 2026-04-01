@@ -47,7 +47,7 @@ class OrchestrationModule:
 
     def run(self) -> Orchestration:
         script = self._load_script()
-        assets = self._load_assets(min_quality=0.0)  # accept all ready assets
+        assets = self._load_assets()  # uses default min_quality=4.0
 
         logger.info("Module 4: mapping %d segments to %d assets", len(script.segments), len(assets))
 
@@ -137,10 +137,14 @@ class OrchestrationModule:
         for idx, segment in enumerate(script.segments):
             asset = self.match_asset_to_segment(segment, visual_assets)
             if asset is None:
-                logger.warning("No asset matched for segment %d — using placeholder", segment.id)
-                asset = visual_assets[0] if visual_assets else None
-                if asset is None:
+                if not visual_assets:
+                    logger.error("No visual assets available — skipping segment %d", segment.id)
                     continue
+                logger.warning(
+                    "No quality asset matched segment %d ('%s') — using best available (quality=%.1f)",
+                    segment.id, segment.text[:40], visual_assets[0].quality_score,
+                )
+                asset = visual_assets[0]
 
             grade = self.assign_color_grade(
                 Mood(segment.mood_tags[0]) if segment.mood_tags and _is_valid_mood(segment.mood_tags[0]) else script.mood
@@ -237,11 +241,23 @@ class OrchestrationModule:
         return []
 
     def _find_background_music(self, assets: list[Asset]) -> Optional[AudioTrack]:
+        # Prefer dedicated music assets
         music_assets = [
             a for a in assets
             if a.type == AssetType.AUDIO and a.role == AssetRole.MUSIC and a.local_path
         ]
+        # Fallback: long SFX/audio tracks (≥30s) can serve as ambient background
         if not music_assets:
+            music_assets = [
+                a for a in assets
+                if a.type in (AssetType.AUDIO, AssetType.SFX)
+                and a.local_path
+                and a.duration_sec >= 30
+            ]
+            if music_assets:
+                logger.info("No dedicated music assets — using long audio asset as background")
+        if not music_assets:
+            logger.info("No background music found — video will be voiceover only")
             return None
         best = max(music_assets, key=lambda a: a.quality_score)
         return AudioTrack(
@@ -252,20 +268,6 @@ class OrchestrationModule:
             fade_in=1.0,
             fade_out=2.0,
         )
-
-    def _voiceover_duration(self, script: Script) -> float:
-        """Return duration of the combined voiceover WAV, or 0 if unavailable."""
-        combined = script.total_voiceover_path
-        if not combined:
-            return 0.0
-        p = Path(combined)
-        if not p.exists():
-            return 0.0
-        try:
-            from pydub import AudioSegment as _AS
-            return _AS.from_file(str(p)).duration_seconds
-        except Exception:
-            return 0.0
 
     # ------------------------------------------------------------------
     # Persistence & helpers
