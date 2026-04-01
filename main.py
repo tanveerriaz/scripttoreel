@@ -50,7 +50,7 @@ _MODULE_LABELS = {
 @click.option("--validate", "action", flag_value="validate", help="Run validation only")
 @click.option("--module", type=int, default=None, help="Run a specific module (1-6)")
 @click.option("--topic", default=None, help="Video topic (for --init)")
-@click.option("--duration", default=5, show_default=True, help="Duration in minutes (for --init)")
+@click.option("--duration", default=5, type=float, show_default=True, help="Duration in minutes (for --init)")
 @click.option("--project", default=None, help="Project ID")
 @click.option("--projects-root", default=None, hidden=True, help="Override projects directory (for tests)")
 def cli(action, module, topic, duration, project, projects_root):

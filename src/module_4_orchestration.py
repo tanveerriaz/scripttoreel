@@ -51,16 +51,18 @@ class OrchestrationModule:
 
         logger.info("Module 4: mapping %d segments to %d assets", len(script.segments), len(assets))
 
-        scenes = self.build_timeline(script, assets)
-        background_music = self._find_background_music(assets)
         voiceover_tracks = self._build_voiceover_tracks(script)
+        # Use actual voiceover duration so video length matches the audio
+        total_duration = self._voiceover_duration(script) or script.duration_sec
+        scenes = self.build_timeline(script, assets, total_duration=total_duration)
+        background_music = self._find_background_music(assets)
 
         meta = self._load_project_meta()
         orch = Orchestration(
             project_id=meta.get("project_id", "unknown"),
             title=script.title,
             topic=script.topic,
-            total_duration_sec=script.duration_sec,
+            total_duration_sec=total_duration,
             color_grade=self.assign_color_grade(script.mood),
             scenes=scenes,
             background_music=background_music,
@@ -117,11 +119,17 @@ class OrchestrationModule:
     # Story 4.2 — Timeline construction
     # ------------------------------------------------------------------
 
-    def build_timeline(self, script: Script, assets: list[Asset]) -> list[Scene]:
+    def build_timeline(
+        self, script: Script, assets: list[Asset], total_duration: float = 0.0
+    ) -> list[Scene]:
         visual_assets = [
             a for a in assets
             if a.type in (AssetType.VIDEO, AssetType.IMAGE) and a.local_path
         ]
+
+        # Distribute total_duration proportionally across segments if provided
+        script_total = sum(s.duration_sec for s in script.segments) or 1.0
+        scale = (total_duration / script_total) if total_duration > 0 else 1.0
 
         scenes: list[Scene] = []
         cursor = 0.0
@@ -130,7 +138,6 @@ class OrchestrationModule:
             asset = self.match_asset_to_segment(segment, visual_assets)
             if asset is None:
                 logger.warning("No asset matched for segment %d — using placeholder", segment.id)
-                # Use the first available visual asset or skip
                 asset = visual_assets[0] if visual_assets else None
                 if asset is None:
                     continue
@@ -143,15 +150,7 @@ class OrchestrationModule:
             t_out = TransitionType.DISSOLVE if idx < len(script.segments) - 1 else TransitionType.FADE_OUT
 
             overlays = self._build_text_overlays(segment)
-
-            vo_track = None
-            if segment.voiceover_path and Path(segment.voiceover_path).exists():
-                vo_track = AudioTrack(
-                    asset_id=f"vo_{segment.id}",
-                    local_path=segment.voiceover_path,
-                    start_time=cursor,
-                    volume=_VOICEOVER_VOLUME,
-                )
+            scene_dur = round(segment.duration_sec * scale, 3)
 
             scene = Scene(
                 id=idx + 1,
@@ -159,16 +158,16 @@ class OrchestrationModule:
                 asset_id=asset.id,
                 asset_path=asset.local_path or "",
                 start_time=cursor,
-                end_time=cursor + segment.duration_sec,
-                duration_sec=segment.duration_sec,
+                end_time=cursor + scene_dur,
+                duration_sec=scene_dur,
                 transition_in=t_in,
                 transition_out=t_out,
                 color_grade=grade,
                 text_overlays=overlays,
-                voiceover=vo_track,
+                voiceover=None,
             )
             scenes.append(scene)
-            cursor += segment.duration_sec
+            cursor += scene_dur
 
         return scenes
 
@@ -201,18 +200,27 @@ class OrchestrationModule:
     # ------------------------------------------------------------------
 
     def _build_voiceover_tracks(self, script: Script) -> list[AudioTrack]:
-        tracks = []
-        cursor = 0.0
+        # Use the combined voiceover.wav produced by module 3 as a single track.
+        # Using individual segment files caused all segments to overlap at t=0
+        # because _mix_audio does not honour start_time offsets.
+        combined = script.total_voiceover_path
+        if combined and Path(combined).exists():
+            return [AudioTrack(
+                asset_id="vo_combined",
+                local_path=combined,
+                start_time=0.0,
+                volume=_VOICEOVER_VOLUME,
+            )]
+        # Fallback: return first available segment path (rare edge-case).
         for seg in script.segments:
             if seg.voiceover_path and Path(seg.voiceover_path).exists():
-                tracks.append(AudioTrack(
-                    asset_id=f"vo_{seg.id}",
+                return [AudioTrack(
+                    asset_id="vo_fallback",
                     local_path=seg.voiceover_path,
-                    start_time=cursor,
+                    start_time=0.0,
                     volume=_VOICEOVER_VOLUME,
-                ))
-            cursor += seg.duration_sec
-        return tracks
+                )]
+        return []
 
     def _find_background_music(self, assets: list[Asset]) -> Optional[AudioTrack]:
         music_assets = [
@@ -230,6 +238,20 @@ class OrchestrationModule:
             fade_in=1.0,
             fade_out=2.0,
         )
+
+    def _voiceover_duration(self, script: Script) -> float:
+        """Return duration of the combined voiceover WAV, or 0 if unavailable."""
+        combined = script.total_voiceover_path
+        if not combined:
+            return 0.0
+        p = Path(combined)
+        if not p.exists():
+            return 0.0
+        try:
+            from pydub import AudioSegment as _AS
+            return _AS.from_file(str(p)).duration_seconds
+        except Exception:
+            return 0.0
 
     # ------------------------------------------------------------------
     # Persistence & helpers

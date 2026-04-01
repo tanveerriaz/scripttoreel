@@ -7,44 +7,52 @@ script_generation:
   user_template: |
     Write a {duration}-minute video script about: "{topic}"
 
-    Return a JSON object with this exact structure:
+    Return a JSON object with this exact structure (replace example values with real ones):
     {{
       "title": "Video title",
       "topic": "{topic}",
       "duration_sec": {duration_sec},
-      "mood": "dark|mysterious|uplifting|dramatic|educational|horror",
-      "visual_style": "cinematic|documentary|montage|dramatic",
-      "color_palette": ["#hex1", "#hex2", "#hex3"],
+      "mood": "educational",
+      "visual_style": "documentary",
+      "color_palette": ["#1a1a2e", "#16213e", "#0f3460"],
       "segments": [
         {{
           "id": 1,
-          "type": "intro|narration|transition|outro",
+          "type": "intro",
           "text": "Voiceover narration text here...",
           "duration_sec": 8,
-          "visual_cues": ["misty mountains", "old ruins", "flickering candle"],
-          "mood_tags": ["mysterious", "atmospheric"],
-          "b_roll_keywords": ["haunted", "ancient", "dark forest"],
-          "sfx_cues": ["wind", "distant bell"],
-          "music_cues": ["ambient drone", "low strings"],
+          "visual_cues": ["futuristic interface", "glowing network", "digital world"],
+          "mood_tags": ["dramatic", "atmospheric"],
+          "b_roll_keywords": ["artificial intelligence", "technology", "future"],
+          "sfx_cues": ["ambient hum"],
+          "music_cues": ["ambient drone"],
           "transitions": {{
             "in": "fade_in",
             "out": "dissolve"
           }},
           "text_overlay": {{
-            "enabled": false,
-            "text": "",
+            "enabled": true,
+            "text": "The Rise of Agentic AI",
             "position": "bottom_third",
-            "style": "lower_third"
+            "style": "lower_third",
+            "start_time": 0.0
           }}
         }}
       ],
-      "background_music_style": "ambient|dramatic|uplifting|suspenseful",
-      "overall_pacing": "slow|medium|fast"
+      "background_music_style": "ambient",
+      "overall_pacing": "medium"
     }}
+
+    IMPORTANT RULES:
+    - mood must be exactly one of: dark, mysterious, uplifting, dramatic, educational, horror, neutral, suspenseful, melancholic
+    - type must be exactly one of: intro, narration, transition, outro
+    - background_music_style must be exactly one of: ambient, dramatic, uplifting, suspenseful
+    - overall_pacing must be exactly one of: slow, medium, fast
+    - Use ONLY valid JSON — no comments, no trailing commas, no pipe characters
 
     Requirements:
     - Total duration of all segments must equal {duration_sec} seconds
-    - Create 6-10 natural segments
+    - Create 3-5 natural segments (keep it concise for short videos)
     - First segment is always "intro" with text overlay enabled
     - Last segment is always "outro"
     - Visual cues must be specific and searchable as stock footage terms

@@ -293,6 +293,7 @@ class RenderModule:
         """Build a direct subprocess argv for a per-scene encode."""
         cmd = [
             "ffmpeg", "-y",
+            "-stream_loop", "-1",  # loop input so short clips fill the full duration
             "-i", input_path,
             "-filter_complex", filter_chain,
             "-map", "[v]",

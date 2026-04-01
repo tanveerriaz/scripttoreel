@@ -94,7 +94,7 @@ class ScriptModule:
             "model": self.ollama_model,
             "prompt": f"{system_prompt}\n\n{user_prompt}",
             "stream": False,
-            "options": {"temperature": 0.7},
+            "options": {"temperature": 0.7, "num_predict": -1},
         }
 
         last_error: Exception = Exception("Unknown error")
@@ -103,7 +103,7 @@ class ScriptModule:
                 resp = requests.post(
                     f"{self.ollama_url}/api/generate",
                     json=payload,
-                    timeout=120,
+                    timeout=300,
                 )
                 resp.raise_for_status()
                 raw_text = resp.json().get("response", "")
@@ -132,6 +132,15 @@ class ScriptModule:
         json_str = text[start : end + 1]
         data = json.loads(json_str)
 
+        # Normalise top-level enum fields (LLM may output "dark|mysterious" style)
+        _VALID_MOODS = {"dark", "mysterious", "uplifting", "dramatic", "educational",
+                        "horror", "neutral", "suspenseful", "melancholic"}
+        mood_raw = str(data.get("mood", "neutral"))
+        data["mood"] = next(
+            (m for m in (p.strip() for p in mood_raw.replace("|", ",").split(",")) if m in _VALID_MOODS),
+            "neutral"
+        )
+
         # Normalise segment transitions (may be nested dicts with "in"/"out" keys)
         for seg in data.get("segments", []):
             tr = seg.get("transitions", {})
@@ -150,23 +159,37 @@ class ScriptModule:
     # Story 3.3 — TTS voiceover
     # ------------------------------------------------------------------
 
+    # Path to piper model — falls back to macOS say if not found
+    _PIPER_MODEL = Path(__file__).parent.parent / "models" / "piper" / "en_US-lessac-high.onnx"
+
     def generate_voiceover_segment(self, text: str, segment_id: int) -> Path:
-        """Generate WAV for one segment. Uses Coqui TTS; falls back to macOS say."""
+        """Generate WAV for one segment. Tries piper → macOS say."""
         out = self._audio_dir / f"voiceover_{segment_id}.wav"
         if out.exists() and out.stat().st_size > 1000:
             return out
         try:
-            self._coqui_tts(text, out)
+            self._piper_tts(text, out)
         except Exception as e:
-            logger.warning("Coqui TTS failed (segment %d): %s — using macOS say", segment_id, e)
+            logger.warning("Piper TTS failed (segment %d): %s — using macOS say", segment_id, e)
             self._macos_say_fallback(text, out)
         return out
 
-    def _coqui_tts(self, text: str, out_path: Path) -> None:
-        """Generate audio with Coqui TTS library."""
-        from TTS.api import TTS  # type: ignore
-        tts = TTS(model_name="tts_models/en/ljspeech/tacotron2-DDC", progress_bar=False)
-        tts.tts_to_file(text=text, file_path=str(out_path))
+    def _piper_tts(self, text: str, out_path: Path) -> None:
+        """Generate audio with piper-tts (high-quality neural TTS)."""
+        model = self._PIPER_MODEL
+        if not model.exists():
+            raise FileNotFoundError(f"Piper model not found: {model}")
+        piper_bin = shutil.which("piper")
+        if not piper_bin:
+            raise RuntimeError("`piper` command not found")
+        result = subprocess.run(
+            [piper_bin, "-m", str(model), "-f", str(out_path)],
+            input=text,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"piper failed: {result.stderr[:200]}")
 
     def _macos_say_fallback(self, text: str, out_path: Path) -> None:
         """Use macOS built-in `say` to produce an AIFF then convert to WAV."""
