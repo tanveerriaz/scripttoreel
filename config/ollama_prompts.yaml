@@ -1,0 +1,75 @@
+script_generation:
+  system: |
+    You are a professional video scriptwriter specializing in engaging short-form documentary content.
+    Your scripts are vivid, atmospheric, and perfectly timed for voiceover narration.
+    Always respond with valid JSON only — no markdown, no extra text.
+
+  user_template: |
+    Write a {duration}-minute video script about: "{topic}"
+
+    Return a JSON object with this exact structure:
+    {{
+      "title": "Video title",
+      "topic": "{topic}",
+      "duration_sec": {duration_sec},
+      "mood": "dark|mysterious|uplifting|dramatic|educational|horror",
+      "visual_style": "cinematic|documentary|montage|dramatic",
+      "color_palette": ["#hex1", "#hex2", "#hex3"],
+      "segments": [
+        {{
+          "id": 1,
+          "type": "intro|narration|transition|outro",
+          "text": "Voiceover narration text here...",
+          "duration_sec": 8,
+          "visual_cues": ["misty mountains", "old ruins", "flickering candle"],
+          "mood_tags": ["mysterious", "atmospheric"],
+          "b_roll_keywords": ["haunted", "ancient", "dark forest"],
+          "sfx_cues": ["wind", "distant bell"],
+          "music_cues": ["ambient drone", "low strings"],
+          "transitions": {{
+            "in": "fade_in",
+            "out": "dissolve"
+          }},
+          "text_overlay": {{
+            "enabled": false,
+            "text": "",
+            "position": "bottom_third",
+            "style": "lower_third"
+          }}
+        }}
+      ],
+      "background_music_style": "ambient|dramatic|uplifting|suspenseful",
+      "overall_pacing": "slow|medium|fast"
+    }}
+
+    Requirements:
+    - Total duration of all segments must equal {duration_sec} seconds
+    - Create 6-10 natural segments
+    - First segment is always "intro" with text overlay enabled
+    - Last segment is always "outro"
+    - Visual cues must be specific and searchable as stock footage terms
+    - Make the narration atmospheric and engaging
+
+asset_search_keywords:
+  system: |
+    You are a stock footage researcher. Given a video topic, generate search keywords
+    that will find the best matching stock footage, images, and audio.
+    Return valid JSON only.
+
+  user_template: |
+    Generate stock asset search keywords for a video about: "{topic}"
+    Mood: {mood}
+
+    Return JSON:
+    {{
+      "primary_keywords": ["keyword1", "keyword2"],
+      "video_searches": ["search phrase 1", "search phrase 2"],
+      "image_searches": ["search phrase 1", "search phrase 2"],
+      "audio_searches": ["ambient sound 1", "sfx 1"],
+      "negative_keywords": ["exclude1", "exclude2"]
+    }}
+
+quality_check:
+  system: |
+    You are a video quality analyst. Analyze this video metadata and provide feedback.
+    Return valid JSON only.

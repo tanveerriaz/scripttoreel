@@ -1,0 +1,36 @@
+# HTTP & scraping
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+urllib3>=2.0.0
+
+# Data validation
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# Image processing
+Pillow>=10.2.0
+opencv-python>=4.9.0
+
+# Audio processing
+librosa>=0.10.1
+pydub>=0.25.1
+soundfile>=0.12.1
+
+# Configuration
+pyyaml>=6.0.1
+python-dotenv>=1.0.0
+
+# CLI
+click>=8.1.7
+rich>=13.7.0
+
+# TTS (Coqui)
+TTS>=0.22.0
+
+# Deep learning (for TTS backend)
+torch>=2.1.0
+torchaudio>=2.1.0
+
+# Utilities
+numpy>=1.26.0
+tqdm>=4.66.0

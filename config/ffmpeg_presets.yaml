@@ -1,0 +1,121 @@
+output:
+  default:
+    codec: h264_videotoolbox      # M4 Pro hardware encoder
+    codec_fallback: libx264        # software fallback
+    bitrate: "5000k"
+    maxrate: "6000k"
+    bufsize: "10000k"
+    resolution: "1920x1080"
+    fps: 30
+    pixel_format: yuv420p
+    audio_codec: aac
+    audio_bitrate: "192k"
+    audio_sample_rate: 44100
+    audio_channels: 2
+    threads: 8
+    colorspace: bt709
+    color_primaries: bt709
+    color_trc: bt709
+
+  vertical:
+    codec: h264_videotoolbox
+    bitrate: "3000k"
+    resolution: "1080x1920"
+    fps: 30
+    pixel_format: yuv420p
+    audio_codec: aac
+    audio_bitrate: "128k"
+
+  preview:
+    codec: libx264
+    bitrate: "800k"
+    resolution: "960x540"
+    fps: 24
+    crf: 28
+
+transitions:
+  fade_in:
+    filter: "fade=t=in:st=0:d={duration}"
+    duration: 0.5
+  fade_out:
+    filter: "fade=t=out:st={start}:d={duration}"
+    duration: 0.5
+  dissolve:
+    filter: "xfade=transition=dissolve:duration={duration}:offset={offset}"
+    duration: 0.8
+  crossfade:
+    filter: "xfade=transition=fade:duration={duration}:offset={offset}"
+    duration: 0.6
+
+color_grades:
+  dark_mysterious:
+    brightness: -0.05
+    contrast: 1.1
+    saturation: 0.7
+    gamma: 0.9
+    hue: -5
+    vignette: true
+  cinematic_warm:
+    brightness: 0.02
+    contrast: 1.05
+    saturation: 0.9
+    gamma: 1.0
+    hue: 8
+    vignette: true
+  documentary:
+    brightness: 0.0
+    contrast: 1.0
+    saturation: 1.0
+    gamma: 1.0
+    hue: 0
+    vignette: false
+  dramatic:
+    brightness: -0.1
+    contrast: 1.2
+    saturation: 0.8
+    gamma: 0.85
+    hue: 0
+    vignette: true
+  uplifting:
+    brightness: 0.05
+    contrast: 1.0
+    saturation: 1.1
+    gamma: 1.05
+    hue: 5
+    vignette: false
+
+text_styles:
+  lower_third:
+    font: "/System/Library/Fonts/Helvetica.ttc"
+    fontsize: 42
+    fontcolor: "white"
+    box: 1
+    boxcolor: "black@0.6"
+    boxborderw: 10
+    x: "(w-text_w)/2"
+    y: "h*0.85"
+  title:
+    font: "/System/Library/Fonts/Helvetica.ttc"
+    fontsize: 72
+    fontcolor: "white"
+    box: 1
+    boxcolor: "black@0.5"
+    boxborderw: 20
+    x: "(w-text_w)/2"
+    y: "(h-text_h)/2"
+  subtitle:
+    font: "/System/Library/Fonts/Helvetica.ttc"
+    fontsize: 36
+    fontcolor: "white@0.9"
+    box: 0
+    x: "(w-text_w)/2"
+    y: "h*0.9"
+
+audio:
+  voiceover_volume: 1.0
+  background_music_volume: 0.12    # -18dB approx
+  sfx_volume: 0.4
+  fade_in_duration: 0.5
+  fade_out_duration: 1.0
+  normalize: true
+  target_lufs: -16
