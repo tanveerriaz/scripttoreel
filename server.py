@@ -24,7 +24,11 @@ from flask import Flask, Response, jsonify, request, send_file, send_from_direct
 ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 
-app = Flask(__name__, static_folder=str(ROOT))
+app = Flask(
+    __name__,
+    static_folder=str(ROOT),
+    static_url_path="/static",
+)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 

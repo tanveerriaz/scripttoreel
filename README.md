@@ -13,6 +13,12 @@
 
 [Architecture](docs/ARCHITECTURE.md) · [Dev plan](PLAN.md) · [Dashboard](#optional-web-dashboard)
 
+<br/>
+
+[![ScriptToReel web dashboard — topic, duration, pipeline status, project list, and MP4 download](assets/docs/dashboard.png)](#optional-web-dashboard)
+
+<sub>Local dashboard · <code>python server.py</code> → <code>http://localhost:8080</code></sub>
+
 </div>
 
 ---
