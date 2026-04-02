@@ -41,10 +41,14 @@ def test_missing_api_key_returns_none(tmp_path, monkeypatch):
     monkeypatch.delenv("PIXABAY_API_KEY", raising=False)
     monkeypatch.delenv("UNSPLASH_ACCESS_KEY", raising=False)
     monkeypatch.delenv("FREESOUND_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("USE_OPENROUTER", raising=False)
 
     keys = load_api_keys(env_path=blank)
     assert keys["PEXELS_API_KEY"] is None
     assert keys["PIXABAY_API_KEY"] is None
+    assert keys["OPENROUTER_API_KEY"] is None
+    assert keys.get("USE_OPENROUTER") in (None, "")
 
 
 def test_api_keys_has_ollama_defaults(tmp_path, monkeypatch):

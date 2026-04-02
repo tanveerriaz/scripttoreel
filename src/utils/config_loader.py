@@ -8,7 +8,7 @@ from typing import Any, Optional
 import yaml
 from dotenv import load_dotenv
 
-_ROOT = Path(__file__).parent.parent.parent  # VideoForge/
+_ROOT = Path(__file__).parent.parent.parent  # repo root (ScriptToReel)
 
 
 def _config_dir() -> Path:
@@ -40,4 +40,7 @@ def load_api_keys(env_path: Optional[Path] = None) -> dict[str, Optional[str]]:
         "FREESOUND_API_KEY": os.environ.get("FREESOUND_API_KEY"),
         "OLLAMA_BASE_URL": os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"),
         "OLLAMA_MODEL": os.environ.get("OLLAMA_MODEL", "llama3.2"),
+        "USE_OPENROUTER": os.environ.get("USE_OPENROUTER", ""),
+        "OPENROUTER_API_KEY": os.environ.get("OPENROUTER_API_KEY"),
+        "OPENROUTER_MODEL": os.environ.get("OPENROUTER_MODEL", "deepseek/deepseek-chat"),
     }

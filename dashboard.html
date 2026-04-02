@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>VideoForge — AI Video Generator</title>
+<link rel="icon" href="/static/assets/branding/app-icon.svg" type="image/svg+xml" />
+<title>ScriptToReel — AI Video Generator</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -32,6 +33,30 @@
   header {
     text-align: center;
     margin-bottom: 40px;
+  }
+
+  header .brand-lockup {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    flex-wrap: wrap;
+  }
+
+  header .brand-lockup img {
+    width: 56px;
+    height: 56px;
+    flex-shrink: 0;
+    filter: drop-shadow(0 2px 10px rgba(99, 102, 241, 0.4));
+  }
+
+  header .brand-lockup .brand-text {
+    text-align: left;
+  }
+
+  @media (max-width: 520px) {
+    header .brand-lockup { flex-direction: column; }
+    header .brand-lockup .brand-text { text-align: center; }
   }
 
   header h1 {
@@ -351,8 +376,13 @@
 <body>
 
 <header>
-  <h1>⚡ VideoForge</h1>
-  <p>Local AI video generation — Ollama · FFmpeg · Pexels · Piper TTS</p>
+  <div class="brand-lockup">
+    <img src="/static/assets/branding/app-icon.svg" width="56" height="56" alt="" />
+    <div class="brand-text">
+      <h1>ScriptToReel</h1>
+      <p>Turn a topic into a 1080p MP4 — Ollama · FFmpeg · stock APIs · TTS</p>
+    </div>
+  </div>
 </header>
 
 <div class="container">

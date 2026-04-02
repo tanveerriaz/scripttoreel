@@ -1,4 +1,4 @@
-# VideoForge
+# ScriptToReel
 
 Local AI video generation pipeline for Mac M4 Pro. Turns a topic string into a 1080p MP4 using Ollama (LLM), macOS TTS, stock footage APIs, and FFmpeg VideoToolbox hardware encoding.
 

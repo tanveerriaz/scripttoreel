@@ -121,8 +121,8 @@ class ScriptModule:
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
-                "HTTP-Referer": "https://videoforge.local",
-                "X-Title": "VideoForge",
+                "HTTP-Referer": "https://scripttoreel.local",
+                "X-Title": "ScriptToReel",
             },
             json={
                 "model": model,

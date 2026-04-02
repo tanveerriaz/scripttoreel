@@ -1,1 +1,1 @@
-"""VideoForge utilities."""
+"""ScriptToReel utilities."""

@@ -2,6 +2,11 @@
 config/api_keys.env
 .env
 
+# Local tooling / large artifacts
+.claude/
+.cursor/
+models/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -20,7 +25,10 @@ venv/
 env/
 .venv/
 
-# Projects output (large files)
+# User projects (JSON often contains absolute local paths)
+projects/*/
+
+# Projects output (large files; redundant if projects/*/ is ignored, kept for clarity)
 projects/*/assets/raw/
 projects/*/assets/audio/
 projects/*/output/

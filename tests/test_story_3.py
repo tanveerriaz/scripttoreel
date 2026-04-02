@@ -25,6 +25,20 @@ from src.module_3_script_voiceover import ScriptModule, OllamaNotAvailableError
 from src.utils.json_schemas import Script, ScriptSegment, SegmentType, Mood
 
 
+# Force Ollama path in tests (real config/api_keys.env may enable OpenRouter).
+_API_KEYS_OLLAMA_ONLY = {
+    "PEXELS_API_KEY": None,
+    "PIXABAY_API_KEY": None,
+    "UNSPLASH_ACCESS_KEY": None,
+    "FREESOUND_API_KEY": None,
+    "OLLAMA_BASE_URL": "http://localhost:11434",
+    "OLLAMA_MODEL": "llama3.2",
+    "USE_OPENROUTER": "",
+    "OPENROUTER_API_KEY": None,
+    "OPENROUTER_MODEL": "deepseek/deepseek-chat",
+}
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -123,7 +137,7 @@ def _make_fake_wav(path: Path, duration_sec: float = 2.0):
 
 def test_ollama_request_format(tmp_project):
     """The module must POST to /api/generate with correct keys."""
-    module = ScriptModule(tmp_project)
+    module = ScriptModule(tmp_project, api_keys=_API_KEYS_OLLAMA_ONLY)
     captured = {}
 
     def fake_post(url, json=None, timeout=None, **kwargs):
@@ -145,7 +159,7 @@ def test_ollama_request_format(tmp_project):
 
 
 def test_ollama_unreachable_raises_clear_error(tmp_project):
-    module = ScriptModule(tmp_project)
+    module = ScriptModule(tmp_project, api_keys=_API_KEYS_OLLAMA_ONLY)
     import requests as req
     with patch("requests.post", side_effect=req.ConnectionError("refused")):
         with pytest.raises(OllamaNotAvailableError):
@@ -162,7 +176,7 @@ def test_script_json_parses_to_pydantic(tmp_project):
 
 def test_retry_on_bad_json(tmp_project):
     """Ollama returns invalid JSON twice; succeeds on 3rd attempt."""
-    module = ScriptModule(tmp_project)
+    module = ScriptModule(tmp_project, api_keys=_API_KEYS_OLLAMA_ONLY)
     responses = [
         _mock_ollama_resp("not json at all {{"),
         _mock_ollama_resp("{broken"),

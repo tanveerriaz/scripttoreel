@@ -1,5 +1,5 @@
 """
-VideoForge Web Server — Flask backend for the dashboard UI.
+ScriptToReel Web Server — Flask backend for the dashboard UI.
 
 Endpoints:
   POST /api/generate       Start a new video generation job
@@ -227,5 +227,5 @@ def _run_pipeline(project_id: str):
 
 
 if __name__ == "__main__":
-    print("VideoForge Dashboard → http://localhost:8080")
+    print("ScriptToReel Dashboard → http://localhost:8080")
     app.run(host="0.0.0.0", port=8080, debug=False, threaded=True)

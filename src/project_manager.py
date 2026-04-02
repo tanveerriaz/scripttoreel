@@ -33,7 +33,7 @@ def create_project(
     projects_root: Optional[Path] = None,
 ) -> ProjectMetadata:
     """
-    Initialise a new VideoForge project directory.
+    Initialise a new ScriptToReel project directory.
 
     Returns the populated ProjectMetadata object.
     Handles duplicate slugs by appending _2, _3 …

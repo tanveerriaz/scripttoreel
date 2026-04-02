@@ -1,5 +1,5 @@
 """
-Pydantic models for all VideoForge JSON contracts.
+Pydantic models for all ScriptToReel JSON contracts.
 """
 from __future__ import annotations
 

@@ -1,5 +1,5 @@
 """
-VideoForge CLI — local real-time video generation pipeline.
+ScriptToReel CLI — local script-to-video pipeline.
 
 Usage:
     python main.py --init --topic "Haunted Places in Pakistan" --duration 5
@@ -55,7 +55,7 @@ _MODULE_LABELS = {
 @click.option("--project", default=None, help="Project ID")
 @click.option("--projects-root", default=None, hidden=True, help="Override projects directory (for tests)")
 def cli(action, module, topic, duration, project, projects_root):
-    """VideoForge — AI-powered local video generation pipeline."""
+    """ScriptToReel — topic to 1080p MP4 pipeline."""
     projects_path = Path(projects_root) if projects_root else (Path(__file__).parent / "projects")
 
     # --init
@@ -116,7 +116,7 @@ def _print_status(project_id: str, projects_path: Path) -> None:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)
 
-    console.print(f"\n[bold]VideoForge Project Status[/bold]")
+    console.print(f"\n[bold]ScriptToReel Project Status[/bold]")
     console.print(f"  Project ID : {meta.project_id}")
     console.print(f"  Topic      : {meta.topic}")
     console.print(f"  Duration   : {meta.duration_min} min")

@@ -1,7 +1,7 @@
 """
 API client wrappers for Pexels, Pixabay, Unsplash, and Freesound.
 Each client handles auth, rate limits (exponential backoff), and maps responses
-to VideoForge Asset Pydantic objects.
+to ScriptToReel Asset Pydantic objects.
 """
 from __future__ import annotations
 

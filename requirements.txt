@@ -24,6 +24,9 @@ python-dotenv>=1.0.0
 click>=8.1.7
 rich>=13.7.0
 
+# Optional web dashboard (server.py)
+flask>=3.0.0
+
 # TTS (Coqui)
 TTS>=0.22.0
 

@@ -1,4 +1,4 @@
-# VideoForge — Agile MVP Plan
+# ScriptToReel — Agile MVP Plan
 
 ## Environment Audit
 | Tool | Version | Status |

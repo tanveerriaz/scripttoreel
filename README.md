@@ -1,45 +1,142 @@
-# VideoForge
+<div align="center">
 
-A free, local, real-time AI video generation pipeline for Mac M4 Pro.
+<img src="assets/branding/app-icon.svg" alt="ScriptToReel" width="96" height="96" />
 
-Turns a topic string into a fully rendered 1080p MP4 — using local Ollama (LLM), macOS TTS, stock footage APIs, and FFmpeg VideoToolbox hardware encoding.
+# ScriptToReel
+
+**Turn a topic into a 1080p MP4** — local AI pipeline on **macOS**: stock APIs, LLM script, TTS, and **FFmpeg** (VideoToolbox when available).
+
+[![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![macOS](https://img.shields.io/badge/macOS-Apple_Silicon-000000?style=for-the-badge&logo=apple&logoColor=white)](#prerequisites)
+[![FFmpeg](https://img.shields.io/badge/FFmpeg-render-007808?style=for-the-badge&logo=ffmpeg&logoColor=white)](https://ffmpeg.org/)
+[![Ollama](https://img.shields.io/badge/Ollama-local_LLM-111111?style=for-the-badge&logo=ollama&logoColor=white)](https://ollama.com/)
+
+[Architecture](docs/ARCHITECTURE.md) · [Dev plan](PLAN.md) · [Dashboard](#optional-web-dashboard)
+
+</div>
 
 ---
 
-## Quick Start
+**New here?** Install prerequisites → copy `config/api_keys.env.example` → run the [First-time checklist](#first-time-checklist) below.
+
+**Branding:** App icon is `assets/branding/app-icon.svg` (public domain film reel from [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Movie-reel.svg); see `assets/branding/README.md`).
+
+---
+
+## Features
+
+- **End-to-end pipeline** — Six modules from research → metadata → script & voice → orchestration → render → validation.
+- **Stock media** — Pexels, Pixabay, Unsplash, Freesound (all optional; graceful degradation without keys).
+- **Flexible LLM** — **Ollama** locally or **OpenRouter** in the cloud; script generation with your chosen model.
+- **Voiceover** — Coqui TTS with **macOS `say`** fallback when needed.
+- **Pro export** — **1920×1080**, 30 fps, H.264 (**VideoToolbox** / **libx264** fallback), AAC stereo, BT.709 MP4.
+- **Human in the loop** — Edit `orchestration.json` before re-render to tune scenes and timing.
+- **Optional dashboard** — `python server.py` → **http://localhost:8080** over the same CLI pipeline.
+
+---
+
+## Prerequisites
+
+| Requirement | Notes |
+|-------------|--------|
+| **macOS** | Developed on Apple Silicon (M4); Intel Mac may work with the same tools. |
+| **Python** | **3.12+** recommended (CI/dev tested on **3.14**). |
+| **FFmpeg + ffprobe** | `brew install ffmpeg` — needed for metadata, render, validation. |
+| **Ollama** | Default LLM for script generation: [ollama.com](https://ollama.com) — or use **OpenRouter** instead (see [API keys](#api-keys-all-free-tier)). |
+
+Optional: free API keys for stock media (Pexels, Pixabay, Unsplash, Freesound). The pipeline still runs without them (placeholder visuals + voiceover).
+
+---
+
+## Installation
 
 ```bash
-# 1. Install Python dependencies
-pip3 install -r requirements.txt --break-system-packages
+git clone https://github.com/tanveerriaz/scripttoreel.git
+cd scripttoreel
 
-# 2. Set your API keys
-cp config/api_keys.env config/api_keys.env   # already exists — edit it
-# Add your free keys for Pexels, Pixabay, Unsplash, Freesound
+# Recommended: virtual environment (avoids --break-system-packages)
+python3 -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
-# 3. Make sure Ollama is running with a model
+pip install -r requirements.txt
+```
+
+Verify tools:
+
+```bash
+python main.py --help
+ffmpeg -version
+ollama --version   # if using Ollama
+```
+
+---
+
+## First-time checklist
+
+1. **API template** — `cp config/api_keys.env.example config/api_keys.env` and add any keys you want (all optional for a minimal run).
+2. **LLM** — Either:
+   - Run `ollama serve`, then `ollama pull llama3.2` (or set `OLLAMA_MODEL` in `api_keys.env`), **or**
+   - Set `USE_OPENROUTER=true` and `OPENROUTER_API_KEY` in `api_keys.env` (see example file).
+3. **Create a project** — `python main.py --init --topic "Your topic" --duration 5`  
+   Note the printed **project ID** (slug from your topic).
+4. **Run the pipeline** — `python main.py --run --project <project_id>`
+5. **Output** — `projects/<project_id>/output/final_video.mp4`
+
+Edit `projects/<project_id>/orchestration.json` before a re-render if you want to tweak scenes or timing (Module 4 output).
+
+---
+
+## How it works
+
+Six **modules** run in order; each reads/writes JSON (and media) under `projects/<id>/`. Contracts are **Pydantic** models in `src/utils/json_schemas.py`.
+
+For a diagram and file-by-file map, see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.  
+For the original story-style dev plan, see **PLAN.md** (optional for end users).
+
+---
+
+## Quick Start (reference)
+
+```bash
+# 1. Dependencies (see Installation)
+pip install -r requirements.txt
+
+# 2. Keys (optional)
+cp config/api_keys.env.example config/api_keys.env
+
+# 3. Ollama (if not using OpenRouter)
 ollama pull llama3.2
-ollama serve  # keep this running in a separate terminal
+ollama serve   # separate terminal
 
-# 4. Create a new project
+# 4. New project
 python main.py --init --topic "Haunted Places in Pakistan" --duration 5
 
-# 5. Run the full pipeline
+# 5. Full pipeline
 python main.py --run --project haunted_places_in_pakistan
 
-# 6. Check status any time
+# 6. Status / validate
 python main.py --status --project haunted_places_in_pakistan
-
-# 7. Validate the output
 python main.py --validate --project haunted_places_in_pakistan
 ```
 
-The final video will be at: `projects/haunted_places_in_pakistan/output/final_video.mp4`
+Video path: `projects/<project_id>/output/final_video.mp4`
+
+---
+
+## Optional: web dashboard
+
+```bash
+source .venv/bin/activate   # if you use a venv
+python server.py
+```
+
+Open **http://localhost:8080** — browser UI over the same CLI pipeline (`Flask` is listed in `requirements.txt`).
 
 ---
 
 ## API Keys (all free tier)
 
-Edit `config/api_keys.env`:
+Copy the template: `cp config/api_keys.env.example config/api_keys.env`, then edit **`config/api_keys.env`** (gitignored — never commit it).
 
 | Key | Where to get it |
 |-----|----------------|
@@ -48,7 +145,9 @@ Edit `config/api_keys.env`:
 | `UNSPLASH_ACCESS_KEY` | https://unsplash.com/developers |
 | `FREESOUND_API_KEY` | https://freesound.org/apiv2/apply/ |
 
-**No keys needed to test the pipeline** — modules gracefully skip sources with missing keys and will still generate a video with whatever assets are available (including the TTS voiceover and color-generated clips).
+**OpenRouter** (cloud LLM instead of Ollama): set `USE_OPENROUTER=true`, `OPENROUTER_API_KEY`, and optionally `OPENROUTER_MODEL` in `api_keys.env`.
+
+**No stock API keys** — Module 1 may yield few or no assets; later modules still produce a video (e.g. placeholders + TTS).
 
 ---
 
@@ -78,11 +177,11 @@ python main.py --validate --project PROJECT_ID
 | Module | What it does |
 |--------|-------------|
 | **1 — Research** | Searches Pexels, Pixabay, Unsplash, Freesound → downloads assets → `assets_raw.json` |
-| **2 — Metadata** | ffprobe + Pillow + librosa + OpenCV → enriches assets with quality scores → `assets.json` |
-| **3 — Script+TTS** | Ollama LLM generates structured script → Coqui TTS (or macOS `say`) → `voiceover.wav` |
-| **4 — Orchestration** | Maps assets to segments by mood/tags/duration → timeline + transitions + audio levels → `orchestration.json` |
-| **5 — Render** | Parses orchestration.json → per-scene clips → concat → audio mix → final encode (h264_videotoolbox) |
-| **6 — Validation** | 10 ffprobe checks + metadata embedding + rich console report → `validation_report.json` |
+| **2 — Metadata** | ffprobe + Pillow + librosa + OpenCV → enriches assets → `assets.json` |
+| **3 — Script+TTS** | LLM script → Coqui TTS or macOS `say` → `script.json`, `voiceover.wav` |
+| **4 — Orchestration** | Asset matching, timeline, transitions → `orchestration.json` (**human edit point**) |
+| **5 — Render** | FFmpeg scene build, concat, audio mix → `output/final_video.mp4` |
+| **6 — Validation** | ffprobe checks + report → `validation_report.json` |
 
 ---
 
@@ -91,16 +190,13 @@ python main.py --validate --project PROJECT_ID
 ```
 projects/my_project/
 ├── project.json          ← metadata + pipeline status
-├── assets_raw.json       ← raw API search results (Module 1 output)
-├── assets.json           ← enriched with metadata + quality scores (Module 2 output)
-├── script.json           ← LLM-generated script with voiceover paths (Module 3 output)
-├── orchestration.json    ← full scene/audio plan (Module 4 output) — edit before render!
+├── assets_raw.json       ← Module 1
+├── assets.json           ← Module 2
+├── script.json           ← Module 3
+├── orchestration.json    ← Module 4 — edit before re-render
 ├── validation_report.json
 ├── assets/
-│   ├── raw/
-│   │   ├── video/
-│   │   ├── image/
-│   │   └── audio/
+│   ├── raw/              ← video / image / audio (gitignored patterns; see .gitignore)
 │   └── processed/
 └── output/
     └── final_video.mp4
@@ -110,32 +206,37 @@ projects/my_project/
 
 ## Output Specs
 
-- Resolution: 1920×1080
-- Frame rate: 30fps
-- Video codec: h264 (VideoToolbox hardware on M4 Pro, libx264 fallback)
-- Audio codec: AAC 192kbps stereo
-- Color space: BT.709 (YouTube standard)
-- Container: MP4 with `-movflags +faststart`
+- Resolution: 1920×1080  
+- Frame rate: 30fps  
+- Video: H.264 (VideoToolbox on Apple Silicon, **libx264** fallback)  
+- Audio: AAC 192kbps stereo  
+- Color: BT.709  
+- Container: MP4, `faststart` for streaming  
 
 ---
 
 ## Troubleshooting
 
-**Ollama not running:**
+**Ollama not running**
+
 ```
 OllamaNotAvailableError: Cannot connect to Ollama at http://localhost:11434
 ```
-→ Run `ollama serve` in a separate terminal, then `ollama pull llama3.2`
 
-**TTS voiceover quality:**
-- Primary: Coqui TTS (`tts_models/en/ljspeech/tacotron2-DDC`) — requires `torch` + model download (~200MB on first run)
-- Fallback: macOS `say -v Samantha` — always available, lower quality
+→ `ollama serve`, then `ollama pull llama3.2` — or enable OpenRouter in `api_keys.env`.
 
-**No assets downloaded (all API keys missing):**
-Module 1 will produce an empty `assets_raw.json`. Module 5 will still render using color placeholder clips. Add at least one API key for real stock footage.
+**TTS**
 
-**FFmpeg VideoToolbox not available:**
-VideoToolbox is detected automatically. If not found, falls back to `libx264` (software). Check with: `ffmpeg -encoders | grep videotoolbox`
+- Primary: Coqui TTS (pulls **torch** + model on first run, ~hundreds of MB).  
+- Fallback: macOS `say`.
+
+**No assets from APIs**
+
+Add at least one stock key, or accept placeholder-heavy output from Module 5.
+
+**VideoToolbox missing**
+
+Pipeline falls back to **libx264**. Check: `ffmpeg -encoders | grep videotoolbox`
 
 ---
 
@@ -143,14 +244,4 @@ VideoToolbox is detected automatically. If not found, falls back to `libx264` (s
 
 ```bash
 python3 -m pytest tests/ -v
-# 102 tests across 7 MVPs
 ```
-
----
-
-## Architecture Notes
-
-- `orchestration.json` is the **edit point** — you can manually edit scene assignments, timing, or transitions before running Module 5
-- All modules are independently runnable via `--module N`
-- Pydantic schemas enforce data contracts between every module
-- Module 3 retries Ollama up to 3× on bad JSON; falls back to macOS `say` for TTS
