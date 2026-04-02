@@ -9,6 +9,7 @@
 [![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![macOS](https://img.shields.io/badge/macOS-Apple_Silicon-000000?style=for-the-badge&logo=apple&logoColor=white)](#prerequisites)
 [![FFmpeg](https://img.shields.io/badge/FFmpeg-render-007808?style=for-the-badge&logo=ffmpeg&logoColor=white)](https://ffmpeg.org/)
+[![OpenRouter](https://img.shields.io/badge/OpenRouter-cloud_LLM-6366f1?style=for-the-badge)](https://openrouter.ai/)
 [![Ollama](https://img.shields.io/badge/Ollama-local_LLM-111111?style=for-the-badge&logo=ollama&logoColor=white)](https://ollama.com/)
 
 [Architecture](docs/ARCHITECTURE.md) · [Dev plan](PLAN.md) · [Dashboard](#optional-web-dashboard)
@@ -33,7 +34,7 @@
 
 - **End-to-end pipeline** — Six modules from research → metadata → script & voice → orchestration → render → validation.
 - **Stock media** — Pexels, Pixabay, Unsplash, Freesound (all optional; graceful degradation without keys).
-- **Flexible LLM** — **Ollama** locally or **OpenRouter** in the cloud; script generation with your chosen model.
+- **Flexible LLM** — **OpenRouter** (cloud) or **Ollama** (local); pick one in `api_keys.env` (`USE_OPENROUTER=true` + key, or local Ollama).
 - **Voiceover** — Coqui TTS with **macOS `say`** fallback when needed.
 - **Pro export** — **1920×1080**, 30 fps, H.264 (**VideoToolbox** / **libx264** fallback), AAC stereo, BT.709 MP4.
 - **Human in the loop** — Edit `orchestration.json` before re-render to tune scenes and timing.
@@ -48,7 +49,7 @@
 | **macOS** | Developed on Apple Silicon (M4); Intel Mac may work with the same tools. |
 | **Python** | **3.12+** recommended (CI/dev tested on **3.14**). |
 | **FFmpeg + ffprobe** | `brew install ffmpeg` — needed for metadata, render, validation. |
-| **Ollama** | Default LLM for script generation: [ollama.com](https://ollama.com) — or use **OpenRouter** instead (see [API keys](#api-keys-all-free-tier)). |
+| **LLM (script)** | **OpenRouter** ([openrouter.ai](https://openrouter.ai)): set `USE_OPENROUTER=true` and `OPENROUTER_API_KEY` — or **Ollama** locally ([ollama.com](https://ollama.com)) with `USE_OPENROUTER=false` (default in `api_keys.env.example`). See [API keys](#api-keys-all-free-tier). |
 
 Optional: free API keys for stock media (Pexels, Pixabay, Unsplash, Freesound). The pipeline still runs without them (placeholder visuals + voiceover).
 
@@ -72,7 +73,7 @@ Verify tools:
 ```bash
 python main.py --help
 ffmpeg -version
-ollama --version   # if using Ollama
+ollama --version   # only if using Ollama (not OpenRouter)
 ```
 
 ---
@@ -80,9 +81,9 @@ ollama --version   # if using Ollama
 ## First-time checklist
 
 1. **API template** — `cp config/api_keys.env.example config/api_keys.env` and add any keys you want (all optional for a minimal run).
-2. **LLM** — Either:
-   - Run `ollama serve`, then `ollama pull llama3.2` (or set `OLLAMA_MODEL` in `api_keys.env`), **or**
-   - Set `USE_OPENROUTER=true` and `OPENROUTER_API_KEY` in `api_keys.env` (see example file).
+2. **LLM** — Configure **one** path in `api_keys.env`:
+   - **OpenRouter:** `USE_OPENROUTER=true`, `OPENROUTER_API_KEY`, optional `OPENROUTER_MODEL` — no local Ollama needed.
+   - **Ollama (local):** `USE_OPENROUTER=false` (default in the example file), then `ollama serve` and `ollama pull llama3.2` (or set `OLLAMA_MODEL`).
 3. **Create a project** — `python main.py --init --topic "Your topic" --duration 5`  
    Note the printed **project ID** (slug from your topic).
 4. **Run the pipeline** — `python main.py --run --project <project_id>`
@@ -110,7 +111,8 @@ pip install -r requirements.txt
 # 2. Keys (optional)
 cp config/api_keys.env.example config/api_keys.env
 
-# 3. Ollama (if not using OpenRouter)
+# 3a. OpenRouter — set USE_OPENROUTER=true + OPENROUTER_API_KEY in api_keys.env (skip 3b)
+# 3b. Ollama (if not using OpenRouter)
 ollama pull llama3.2
 ollama serve   # separate terminal
 
@@ -151,7 +153,7 @@ Copy the template: `cp config/api_keys.env.example config/api_keys.env`, then ed
 | `UNSPLASH_ACCESS_KEY` | https://unsplash.com/developers |
 | `FREESOUND_API_KEY` | https://freesound.org/apiv2/apply/ |
 
-**OpenRouter** (cloud LLM instead of Ollama): set `USE_OPENROUTER=true`, `OPENROUTER_API_KEY`, and optionally `OPENROUTER_MODEL` in `api_keys.env`.
+**OpenRouter** (cloud LLM): set `USE_OPENROUTER=true`, `OPENROUTER_API_KEY`, and optionally `OPENROUTER_MODEL` in `api_keys.env` — script generation does not use Ollama when this is enabled.
 
 **No stock API keys** — Module 1 may yield few or no assets; later modules still produce a video (e.g. placeholders + TTS).
 
@@ -184,7 +186,7 @@ python main.py --validate --project PROJECT_ID
 |--------|-------------|
 | **1 — Research** | Searches Pexels, Pixabay, Unsplash, Freesound → downloads assets → `assets_raw.json` |
 | **2 — Metadata** | ffprobe + Pillow + librosa + OpenCV → enriches assets → `assets.json` |
-| **3 — Script+TTS** | LLM script → Coqui TTS or macOS `say` → `script.json`, `voiceover.wav` |
+| **3 — Script+TTS** | OpenRouter or Ollama → script JSON; Coqui TTS or macOS `say` → `script.json`, `voiceover.wav` |
 | **4 — Orchestration** | Asset matching, timeline, transitions → `orchestration.json` (**human edit point**) |
 | **5 — Render** | FFmpeg scene build, concat, audio mix → `output/final_video.mp4` |
 | **6 — Validation** | ffprobe checks + report → `validation_report.json` |
@@ -223,13 +225,13 @@ projects/my_project/
 
 ## Troubleshooting
 
-**Ollama not running**
+**Ollama not running** (only when `USE_OPENROUTER` is false or unset)
 
 ```
 OllamaNotAvailableError: Cannot connect to Ollama at http://localhost:11434
 ```
 
-→ `ollama serve`, then `ollama pull llama3.2` — or enable OpenRouter in `api_keys.env`.
+→ `ollama serve`, then `ollama pull llama3.2` — **or** set `USE_OPENROUTER=true` and add `OPENROUTER_API_KEY` so Module 3 uses OpenRouter instead.
 
 **TTS**
 
