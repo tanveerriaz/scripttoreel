@@ -55,6 +55,12 @@ def index():
     return send_from_directory(str(ROOT), "dashboard.html")
 
 
+@app.route("/assets/<path:subpath>")
+def serve_assets(subpath: str):
+    """Serve files under assets/ so dashboard can use relative URLs (same as file:// opens)."""
+    return send_from_directory(str(ROOT / "assets"), subpath)
+
+
 @app.route("/api/projects")
 def list_projects():
     projects_dir = ROOT / "projects"
