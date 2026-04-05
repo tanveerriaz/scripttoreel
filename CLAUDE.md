@@ -1,6 +1,6 @@
 # ScriptToReel
 
-Local AI video generation pipeline for Mac M4 Pro. Turns a topic string into a 1080p MP4 using Ollama (LLM), macOS TTS, stock footage APIs, and FFmpeg VideoToolbox hardware encoding.
+Local AI video generation pipeline for Mac M4 Pro. Turns a topic string into a 1080p MP4 using Ollama (LLM), edge-tts/macOS TTS, stock footage APIs, and MoviePy v2.0 + FFmpeg VideoToolbox encoding.
 
 ## Quick Reference
 
@@ -42,18 +42,24 @@ src/
   project_manager.py             — create/load/update project.json
   module_1_research.py           — API search + asset download (Pexels, Pixabay, Unsplash, Freesound)
   module_2_metadata.py           — ffprobe/Pillow/librosa/OpenCV metadata + quality scoring
-  module_3_script_voiceover.py   — Ollama LLM script gen + Coqui TTS (macOS say fallback)
+  module_3_script_voiceover.py   — Ollama LLM script gen + edge-tts TTS (macOS say fallback)
+                                   Includes _enhance_hook: prepends best hook from HookEngine to intro
   module_4_orchestration.py      — Asset-to-segment matching, timeline, transitions, audio mix plan
-  module_5_ffmpeg_render.py      — Scene render, concat, audio mix, final encode (h264_videotoolbox)
+                                   Visual coherence scoring: dedup + color temperature smoothing
+  module_5_ffmpeg_render.py      — MoviePy v2.0 scene render (Ken Burns, color grade, vignette,
+                                   letterbox, CrossFadeIn); audio mix stays as ffmpeg subprocess
   module_6_validation.py         — 10 ffprobe checks, metadata embedding, validation report
+  hook_engine.py                 — 12-pattern HookEngine (question/stat/controversy/story/…)
+                                   LLM generation via OpenRouter/Ollama + template fallback
+  ai_director.py                 — AI-driven scene timing and transition direction
   utils/
     json_schemas.py              — All Pydantic models (Asset, Script, Scene, Orchestration, etc.)
     api_handlers.py              — PexelsClient, PixabayClient, UnsplashClient, FreesoundClient
     config_loader.py             — YAML + dotenv loading
-    ffmpeg_builder.py            — Fluent FFmpeg command builder
+    ffmpeg_builder.py            — Fluent FFmpeg command builder (audio mixing only)
 config/
   ffmpeg_presets.yaml            — Output specs, transitions, color grades, audio levels
-  ollama_prompts.yaml            — LLM prompt templates for script generation
+  ollama_prompts.yaml            — LLM prompt templates for script gen + hook engine
   api_keys.env                   — API keys (gitignored)
 ```
 
@@ -72,27 +78,30 @@ config/
 
 ## Tests
 
-102 tests across 11 test files, organized by PLAN.md story numbers:
+191 tests across 13 test files:
 
 ```
-tests/test_story_0_1.py   — Project init (slug, dirs, project.json)
-tests/test_story_0_2.py   — Status command
-tests/test_story_0_3.py   — Config loading
-tests/test_story_1_1.py   — Pexels API client
-tests/test_story_1_2_3.py — Pixabay, Unsplash, Freesound clients
-tests/test_story_1_4_5.py — Asset download + assets_raw.json
-tests/test_story_2.py     — Metadata extraction (ffprobe, Pillow, librosa, OpenCV)
-tests/test_story_3.py     — Script generation + TTS voiceover
-tests/test_story_4.py     — Scene orchestration
-tests/test_story_5.py     — FFmpeg rendering
-tests/test_story_6.py     — Quality validation
+tests/test_story_0_1.py        — Project init (slug, dirs, project.json)
+tests/test_story_0_2.py        — Status command
+tests/test_story_0_3.py        — Config loading
+tests/test_story_1_1.py        — Pexels API client
+tests/test_story_1_2_3.py      — Pixabay, Unsplash, Freesound clients
+tests/test_story_1_4_5.py      — Asset download + assets_raw.json
+tests/test_story_2.py          — Metadata extraction (ffprobe, Pillow, librosa, OpenCV)
+tests/test_story_3.py          — Script generation + TTS voiceover
+tests/test_story_4.py          — Scene orchestration
+tests/test_story_5.py          — MoviePy rendering (scene clips, concat, full render)
+tests/test_story_6.py          — Quality validation
+tests/test_hook_engine.py      — HookEngine: all 12 patterns, LLM mock, fallback, hook_style
+tests/test_visual_coherence.py — Color temperature scoring, dedup, coherence penalties
+tests/test_production_plan.py  — ProductionPlanModule schema and parsing
 ```
 
 Tests use mocks extensively for external services (API calls, Ollama, ffprobe, TTS). Fixtures create temp project directories.
 
 ## Dependencies
 
-Python 3.14+, key packages: `click`, `rich`, `pydantic`, `requests`, `Pillow`, `opencv-python`, `librosa`, `pydub`, `soundfile`, `pyyaml`, `python-dotenv`, `TTS` (Coqui), `torch`, `tqdm`.
+Python 3.9+, key packages: `click`, `rich`, `pydantic`, `requests`, `Pillow`, `opencv-python`, `librosa`, `pydub`, `soundfile`, `pyyaml`, `python-dotenv`, `moviepy>=2.0.0`, `numpy`, `edge-tts`.
 
 External tools: `ffmpeg`/`ffprobe` (with VideoToolbox on macOS), `ollama` (local LLM server).
 
