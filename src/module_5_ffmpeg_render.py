@@ -89,7 +89,15 @@ class RenderModule:
 
             # Step 2: concat scene clips (with xfade transitions where applicable)
             concat_video = tmp / "concat.mp4"
-            self.concat_clips(scene_clips, str(concat_video), scenes=orch.scenes)
+            if not scene_clips:
+                # No visual assets — render a solid black placeholder for the full duration
+                logger.warning(
+                    "No scenes available — rendering black placeholder for %.1fs",
+                    orch.total_duration_sec,
+                )
+                self._render_placeholder(orch.total_duration_sec, concat_video)
+            else:
+                self.concat_clips(scene_clips, str(concat_video), scenes=orch.scenes)
 
             # Step 3: mix audio
             audio_out = tmp / "mixed_audio.aac"
@@ -241,7 +249,10 @@ class RenderModule:
     def _render_placeholder(self, duration_sec: float, out: Path) -> None:
         cmd = (
             FFmpegCommand()
-            .input(f"color=c=black:size={_W}x{_H}:duration={duration_sec}:rate={_FPS}", f=True)
+            .input(
+                f"color=c=black:size={_W}x{_H}:duration={duration_sec}:rate={_FPS}",
+                f="lavfi",
+            )
             .output(str(out), **self._video_encode_opts())
         )
         self._run(cmd)
@@ -262,6 +273,8 @@ class RenderModule:
         transitions, xfade filters are applied. Falls back to concat demuxer
         (hard cuts, no re-encode) when transitions are not needed.
         """
+        if not clip_paths:
+            raise ValueError("concat_clips called with empty clip list")
         if len(clip_paths) == 1:
             shutil.copy(clip_paths[0], out_path)
             return

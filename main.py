@@ -7,9 +7,15 @@ Usage:
     python main.py --module 1 --project haunted_places_in_pakistan
     python main.py --status --project haunted_places_in_pakistan
     python main.py --validate --project haunted_places_in_pakistan
+
+Pipeline order (new):
+    --init  →  create project dirs  →  AI Director (production_plan.json)
+    --run   →  Module 1 (Research)  →  2 (Metadata)  →  3 (Script+TTS)
+            →  4 (Orchestration)   →  5 (Render)     →  6 (Validation)
 """
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -20,6 +26,11 @@ from rich.table import Table
 from rich import box
 
 sys.path.insert(0, str(Path(__file__).parent))
+
+# Ensure Homebrew binaries are on PATH so ffmpeg/ffprobe are always found on macOS
+_HOMEBREW_BIN = "/opt/homebrew/bin"
+if Path(_HOMEBREW_BIN).is_dir() and _HOMEBREW_BIN not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = _HOMEBREW_BIN + os.pathsep + os.environ.get("PATH", "")
 
 from src.project_manager import create_project, load_project
 from src.utils.json_schemas import ModuleStatus
@@ -58,7 +69,7 @@ def cli(action, module, topic, duration, project, projects_root):
     """ScriptToReel — topic to 1080p MP4 pipeline."""
     projects_path = Path(projects_root) if projects_root else (Path(__file__).parent / "projects")
 
-    # --init
+    # --init: create project dirs + run AI Director
     if action == "init":
         if not topic:
             console.print("[red]Error:[/red] --topic is required with --init")
@@ -68,6 +79,23 @@ def cli(action, module, topic, duration, project, projects_root):
         console.print(f"   Project ID : [bold]{meta.project_id}[/bold]")
         console.print(f"   Topic      : {meta.topic}")
         console.print(f"   Duration   : {meta.duration_min} min ({meta.duration_sec:.0f}s)")
+
+        # Run AI Director to generate production_plan.json
+        project_dir = projects_path / meta.project_id
+        console.print("\n[bold cyan]Running AI Director...[/bold cyan]")
+        try:
+            from src.ai_director import AIDirector
+            director = AIDirector(project_dir)
+            plan = director.run(topic=meta.topic, duration_min=meta.duration_min)
+            console.print(f"   [green]✅ production_plan.json generated[/green]")
+            console.print(f"   Visual style : {plan.visual_style}")
+            console.print(f"   Tone         : {plan.tone}")
+            console.print(f"   Narrator     : {plan.narrator_voice}")
+            console.print(f"   Keywords     : {', '.join(plan.search_keywords[:4])}...")
+        except Exception as e:
+            console.print(f"   [yellow]⚠  AI Director failed (non-fatal): {e}[/yellow]")
+            console.print("   Continuing without production_plan.json — LLM will plan inline.")
+
         console.print(f"\n   Next step  : python main.py --run --project {meta.project_id}\n")
         return
 

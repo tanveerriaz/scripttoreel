@@ -207,7 +207,7 @@ class ScriptModule:
     _PIPER_MODEL = Path(__file__).parent.parent / "models" / "piper" / "en_US-lessac-high.onnx"
 
     def generate_voiceover_segment(self, text: str, segment_id: int) -> Path:
-        """Generate WAV for one segment. Tries piper → macOS say → silence."""
+        """Generate WAV for one segment. Tries Edge TTS → piper → macOS say."""
         out = self._audio_dir / f"voiceover_{segment_id}.wav"
         if out.exists() and out.stat().st_size > 1000:
             return out
@@ -218,12 +218,83 @@ class ScriptModule:
             AudioSegment.silent(duration=500).export(str(out), format="wav")
             return out
 
+        # Priority: Edge TTS → Piper → macOS say
+        try:
+            self._edge_tts(text, out)
+            return out
+        except Exception as e:
+            logger.warning("Edge TTS failed (segment %d): %s — trying piper", segment_id, e)
+
         try:
             self._piper_tts(text, out)
         except Exception as e:
             logger.warning("Piper TTS failed (segment %d): %s — using macOS say", segment_id, e)
             self._macos_say_fallback(text, out)
         return out
+
+    def _edge_tts(self, text: str, out_path: Path) -> None:
+        """Generate audio with Microsoft Edge TTS (high-quality neural voices)."""
+        import asyncio
+        try:
+            import edge_tts
+        except ImportError:
+            raise RuntimeError("edge-tts not installed: pip install edge-tts")
+
+        voice = self._edge_tts_voice()
+
+        async def _generate() -> None:
+            communicate = edge_tts.Communicate(text, voice)
+            mp3_path = out_path.with_suffix(".mp3")
+            await communicate.save(str(mp3_path))
+            # Convert MP3 → WAV (22050 Hz mono, matching piper output)
+            subprocess.run(
+                [
+                    self._ffmpeg_bin(),
+                    "-y", "-i", str(mp3_path),
+                    "-ar", "22050", "-ac", "1",
+                    "-af", "highpass=f=80,lowpass=f=8000",
+                    str(out_path),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            mp3_path.unlink(missing_ok=True)
+
+        try:
+            asyncio.run(_generate())
+        except RuntimeError as exc:
+            # Already inside a running event loop (e.g. Jupyter) — use a thread
+            if "cannot run nested" in str(exc).lower() or "event loop is already running" in str(exc).lower():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    pool.submit(asyncio.run, _generate()).result()
+            else:
+                raise
+
+    def _edge_tts_voice(self) -> str:
+        """Pick an Edge TTS voice from production_plan.json or use a sensible default."""
+        plan_path = self.project_dir / "production_plan.json"
+        if plan_path.exists():
+            try:
+                import json as _json
+                plan = _json.loads(plan_path.read_text())
+                voice = plan.get("narrator_voice", "")
+                if voice:
+                    return voice
+            except Exception:
+                pass
+        return "en-US-GuyNeural"  # professional male, works well for documentary/tech topics
+
+    @staticmethod
+    def _ffmpeg_bin() -> str:
+        """Return path to ffmpeg, checking homebrew if not in PATH."""
+        found = shutil.which("ffmpeg")
+        if found:
+            return found
+        for candidate in ("/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"):
+            if Path(candidate).exists():
+                return candidate
+        return "ffmpeg"  # let subprocess raise a clear error
 
     def _piper_tts(self, text: str, out_path: Path) -> None:
         """Generate audio with piper-tts (high-quality neural TTS).
@@ -280,7 +351,7 @@ class ScriptModule:
         )
         # Convert AIFF → WAV, upsample to 22050 Hz mono for consistency with piper
         subprocess.run(
-            ["ffmpeg", "-y", "-i", str(aiff),
+            [self._ffmpeg_bin(), "-y", "-i", str(aiff),
              "-ar", "22050", "-ac", "1",
              "-af", "highpass=f=80,lowpass=f=8000",  # gentle EQ to reduce tinny quality
              str(out_path)],
