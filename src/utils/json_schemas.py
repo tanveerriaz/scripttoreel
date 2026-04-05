@@ -75,6 +75,22 @@ class ColorGrade(str, Enum):
     UPLIFTING = "uplifting"
 
 
+class ToneStyle(str, Enum):
+    CINEMATIC = "cinematic"
+    DOCUMENTARY = "documentary"
+    DRAMATIC = "dramatic"
+    UPLIFTING = "uplifting"
+    CASUAL = "casual"
+
+
+class VisualStyleChoice(str, Enum):
+    DARK_MYSTERIOUS = "dark_mysterious"
+    CINEMATIC_WARM = "cinematic_warm"
+    DOCUMENTARY = "documentary"
+    DRAMATIC = "dramatic"
+    BRIGHT_MODERN = "bright_modern"
+
+
 # ---------------------------------------------------------------------------
 # Sub-models
 # ---------------------------------------------------------------------------
@@ -312,6 +328,28 @@ class ProjectMetadata(BaseModel):
     output_file: Optional[str] = None
     total_assets: int = 0
     script_title: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Validation Report
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Production Plan
+# ---------------------------------------------------------------------------
+
+class ProductionPlan(BaseModel):
+    topic: str
+    narrator_voice: str = "Samantha"
+    testimonial_voices: list[str] = Field(default_factory=list)
+    tone: ToneStyle = ToneStyle.DOCUMENTARY
+    visual_style: VisualStyleChoice = VisualStyleChoice.DOCUMENTARY
+    target_audience: str = "general audience"
+    cultural_context: str = ""
+    duration_minutes: float = 5.0
+    avoid_list: list[str] = Field(default_factory=list)
+    image_search_queries: list[str] = Field(default_factory=list)
+    script_guidance: str = ""
 
 
 # ---------------------------------------------------------------------------
