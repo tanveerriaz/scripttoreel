@@ -636,11 +636,17 @@ class RenderModule:
             ], capture_output=True, check=True)
             return
 
-        _LUFS_FILTER = "loudnorm=I=-14:TP=-1.5:LRA=11"
+        # Voiceover → normalise to broadcast speech level (-14 LUFS)
+        # Music/SFX  → normalise to background level (-35 LUFS) then apply volume
+        #              This prevents loudnorm from re-amplifying the music back up.
+        _VO_LUFS    = "loudnorm=I=-14:TP=-1.5:LRA=11"
+        _MUSIC_LUFS = "loudnorm=I=-35:TP=-3:LRA=7"
 
         if len(inputs) == 1:
-            af = f"volume={volumes[0]:.4f},{_LUFS_FILTER}"
-            if bg_input_idx == 0 and orch.background_music:
+            is_music = (bg_input_idx == 0 and orch.background_music)
+            lufs = _MUSIC_LUFS if is_music else _VO_LUFS
+            af = f"volume={volumes[0]:.4f},{lufs}"
+            if is_music:
                 af += self._bg_music_afade(orch.background_music, total_duration)
             af += f",apad=whole_dur={total_duration}"
             subprocess.run([
@@ -661,12 +667,11 @@ class RenderModule:
         vol_outs = []
         for i, vol in enumerate(volumes):
             vol_outs.append(f"av{i}")
-            if i == bg_input_idx and orch.background_music:
-                fade_filters = self._bg_music_afade(orch.background_music, total_duration)
-            else:
-                fade_filters = ""
+            is_music = (i == bg_input_idx and orch.background_music)
+            lufs = _MUSIC_LUFS if is_music else _VO_LUFS
+            fade_filters = self._bg_music_afade(orch.background_music, total_duration) if is_music else ""
             vol_parts.append(
-                f"[{i}:a]volume={vol:.4f},{_LUFS_FILTER}{fade_filters},"
+                f"[{i}:a]volume={vol:.4f},{lufs}{fade_filters},"
                 f"apad=whole_dur={total_duration}[av{i}]"
             )
 
