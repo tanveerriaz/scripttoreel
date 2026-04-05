@@ -134,6 +134,16 @@ class LocalSDXLClient:
         # Reduces peak memory on MPS — important for 24GB Mac configurations
         pipe.enable_attention_slicing()
 
+        # MPS + float16 produces NaN in the VAE decoder (known diffusers issue).
+        # Casting VAE to float32 fixes the "invalid value encountered in cast"
+        # RuntimeWarning and prevents corrupted/black output images.
+        if device == "mps":
+            import torch as _torch  # noqa: PLC0415
+            pipe.vae.to(_torch.float32)
+
+        # Silence diffusers' own tqdm step-by-step progress output
+        pipe.set_progress_bar_config(disable=True)
+
         LocalSDXLClient._pipe = pipe
         logger.info("SDXL pipeline ready on %s", device)
         return pipe
@@ -156,6 +166,12 @@ class LocalSDXLClient:
         pipe = self._load_pipeline()
 
         logger.info("SDXL generating %d image(s) for: %r", num_images, prompt[:80])
+
+        # Suppress diffusers' internal tqdm bars — Rich progress bar is shown
+        # at the module_1 level instead
+        import warnings  # noqa: PLC0415
+        warnings.filterwarnings("ignore", category=FutureWarning)
+        warnings.filterwarnings("ignore", category=RuntimeWarning)
 
         result = pipe(
             prompt=prompt,
