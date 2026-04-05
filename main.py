@@ -54,7 +54,8 @@ _MODULE_LABELS = {
 @click.option("--duration", default=5, type=float, show_default=True, help="Duration in minutes (for --init)")
 @click.option("--project", default=None, help="Project ID")
 @click.option("--projects-root", default=None, hidden=True, help="Override projects directory (for tests)")
-def cli(action, module, topic, duration, project, projects_root):
+@click.option("--skip-director", is_flag=True, default=False, help="Skip AI Director review passes (faster runs)")
+def cli(action, module, topic, duration, project, projects_root, skip_director):
     """ScriptToReel — topic to 1080p MP4 pipeline."""
     projects_path = Path(projects_root) if projects_root else (Path(__file__).parent / "projects")
 
@@ -87,13 +88,13 @@ def cli(action, module, topic, duration, project, projects_root):
 
     # --module N
     if action == "module" or module is not None:
-        _run_module(project, module, projects_path)
+        _run_module(project, module, projects_path, skip_director=skip_director)
         return
 
     # --run (all modules)
     if action == "run":
         for m in range(1, 7):
-            _run_module(project, m, projects_path)
+            _run_module(project, m, projects_path, skip_director=skip_director)
         return
 
     # --validate
@@ -175,7 +176,12 @@ def _check_dependencies(module_num: int) -> None:
                 sys.exit(1)
 
 
-def _run_module(project_id: str, module_num: int, projects_path: Path) -> None:
+def _run_module(
+    project_id: str,
+    module_num: int,
+    projects_path: Path,
+    skip_director: bool = False,
+) -> None:
     """Dispatch to the appropriate module runner."""
     _check_dependencies(module_num)
     try:
@@ -198,11 +204,11 @@ def _run_module(project_id: str, module_num: int, projects_path: Path) -> None:
         m.run()
     elif module_num == 3:
         from src.module_3_script_voiceover import ScriptModule
-        m = ScriptModule(project_dir)
+        m = ScriptModule(project_dir, skip_director=skip_director)
         m.run()
     elif module_num == 4:
         from src.module_4_orchestration import OrchestrationModule
-        m = OrchestrationModule(project_dir)
+        m = OrchestrationModule(project_dir, skip_director=skip_director)
         m.run()
     elif module_num == 5:
         from src.module_5_ffmpeg_render import RenderModule

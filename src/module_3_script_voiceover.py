@@ -43,11 +43,17 @@ class OllamaNotAvailableError(Exception):
 
 
 class ScriptModule:
-    def __init__(self, project_dir: Path, api_keys: Optional[dict] = None):
+    def __init__(
+        self,
+        project_dir: Path,
+        api_keys: Optional[dict] = None,
+        skip_director: bool = False,
+    ):
         self.project_dir = Path(project_dir)
         self.api_keys = api_keys if api_keys is not None else load_api_keys()
         self.ollama_url = self.api_keys.get("OLLAMA_BASE_URL", "http://localhost:11434")
         self.ollama_model = self.api_keys.get("OLLAMA_MODEL", "llama3.2")
+        self.skip_director = skip_director
         self._audio_dir.mkdir(parents=True, exist_ok=True)
 
     @property
@@ -66,6 +72,11 @@ class ScriptModule:
         logger.info("Module 3: generating script for %r (%.0f min)", topic, duration_min)
 
         script = self.generate_script_ollama(topic, duration_min)
+
+        # Run ScriptDirector review unless explicitly skipped
+        if not self.skip_director:
+            script = self._run_script_director(script)
+
         script = self.generate_all_voiceovers(script)
         combined_path = self._audio_dir / "voiceover.wav"
         self.concatenate_voiceovers(script, combined_path)
@@ -73,6 +84,24 @@ class ScriptModule:
         self.save_script(script)
         self._update_status(ModuleStatus.COMPLETE)
         return script
+
+    def _run_script_director(self, draft: Script) -> Script:
+        """Save script_draft.json, run ScriptDirector review, return revised script."""
+        # Persist the raw draft so the user can compare before/after
+        draft_path = self.project_dir / "script_draft.json"
+        draft_path.write_text(
+            json.dumps(draft.model_dump(), indent=2, default=str)
+        )
+        logger.info("Saved script_draft.json — running ScriptDirector review")
+
+        try:
+            from src.ai_director import ScriptDirector
+            director = ScriptDirector(api_keys=self.api_keys)
+            revised = director.review(draft)
+            return revised
+        except Exception as e:
+            logger.warning("ScriptDirector review failed: %s — using original script", e)
+            return draft
 
     # ------------------------------------------------------------------
     # Story 3.1 — Ollama script generation
