@@ -48,6 +48,7 @@ class ResearchModule:
     def __init__(self, project_dir: Path, api_keys: Optional[dict] = None):
         self.project_dir = Path(project_dir)
         self.api_keys = api_keys if api_keys is not None else load_api_keys()
+        self._warned_sources: set[str] = set()  # tracks which sources already warned
         self._ensure_dirs()
 
     # ------------------------------------------------------------------
@@ -260,14 +261,18 @@ class ResearchModule:
             results = [a for a in results if not self._has_forbidden_tags(a)]
             dropped = before - len(results)
             if dropped:
-                logger.info("%s: dropped %d asset(s) with forbidden tags", label, dropped)
-            logger.info("%s: found %d results", label, len(results))
+                logger.debug("%s: dropped %d asset(s) with forbidden tags", label, dropped)
+            logger.debug("%s: found %d results", label, len(results))
             return results
         except APIKeyError as e:
-            logger.warning("Skipping %s — %s", label, e)
+            # Log once per source class (strip the query suffix for dedup key)
+            source = label.split("[")[0].strip()
+            if source not in self._warned_sources:
+                self._warned_sources.add(source)
+                logger.warning("⚠  %s unavailable — %s", source, e)
             return []
         except Exception as e:
-            logger.warning("Error searching %s: %s", label, e)
+            logger.debug("Error searching %s: %s", label, e)
             return []
 
     @staticmethod
