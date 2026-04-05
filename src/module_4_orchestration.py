@@ -36,6 +36,10 @@ _VOICEOVER_VOLUME = 1.0
 _MUSIC_VOLUME = 0.06
 _SFX_VOLUME = 0.4
 
+# Visual cut cadence: each scene is at most this many seconds before switching asset.
+# Alternates video → image → video → image for visual variety.
+_MAX_CLIP_SEC = 5.0
+
 
 class OrchestrationModule:
     def __init__(self, project_dir: Path, skip_director: bool = False):
@@ -148,56 +152,76 @@ class OrchestrationModule:
             if a.type in (AssetType.VIDEO, AssetType.IMAGE) and a.local_path
         ]
 
+        # Separate pools for alternation — video on even clips, image on odd
+        video_pool = [a for a in visual_assets if a.type == AssetType.VIDEO]
+        image_pool = [a for a in visual_assets if a.type == AssetType.IMAGE]
+
         # Distribute total_duration proportionally across segments if provided
         script_total = sum(s.duration_sec for s in script.segments) or 1.0
         scale = (total_duration / script_total) if total_duration > 0 else 1.0
 
         scenes: list[Scene] = []
         cursor = 0.0
+        scene_id = 0
+        clip_counter = 0  # increments per clip; even → video, odd → image
 
-        for idx, segment in enumerate(script.segments):
-            asset = self.match_asset_to_segment(segment, visual_assets)
-            if asset is None:
-                if not visual_assets:
-                    logger.error("No visual assets available — skipping segment %d", segment.id)
-                    continue
-                logger.warning(
-                    "No quality asset matched segment %d ('%s') — using best available (quality=%.1f)",
-                    segment.id, segment.text[:40], visual_assets[0].quality_score,
-                )
-                asset = visual_assets[0]
+        for seg_idx, segment in enumerate(script.segments):
+            seg_dur = round(segment.duration_sec * scale, 3)
 
-            # Color grade: plan visual_style overrides mood-based selection
+            # Subdivide long segments into ≤_MAX_CLIP_SEC clips
+            n_clips = max(1, round(seg_dur / _MAX_CLIP_SEC))
+            clip_dur = round(seg_dur / n_clips, 3)
+
+            # Color grade is constant across sub-clips of the same segment
             plan_grade = self._plan_color_grade(plan)
-            if plan_grade is not None:
-                grade = plan_grade
-            else:
-                grade = self.assign_color_grade(
-                    Mood(segment.mood_tags[0]) if segment.mood_tags and _is_valid_mood(segment.mood_tags[0]) else script.mood
-                )
-
-            t_in = TransitionType.FADE_IN if idx == 0 else TransitionType.DISSOLVE
-            t_out = TransitionType.DISSOLVE if idx < len(script.segments) - 1 else TransitionType.FADE_OUT
+            grade = plan_grade if plan_grade is not None else self.assign_color_grade(
+                Mood(segment.mood_tags[0]) if segment.mood_tags and _is_valid_mood(segment.mood_tags[0]) else script.mood
+            )
 
             overlays = self._build_text_overlays(segment)
-            scene_dur = round(segment.duration_sec * scale, 3)
+            total_clips = sum(max(1, round(round(s.duration_sec * scale, 3) / _MAX_CLIP_SEC)) for s in script.segments)
 
-            scene = Scene(
-                id=idx + 1,
-                segment_id=segment.id,
-                asset_id=asset.id,
-                asset_path=asset.local_path or "",
-                start_time=cursor,
-                end_time=cursor + scene_dur,
-                duration_sec=scene_dur,
-                transition_in=t_in,
-                transition_out=t_out,
-                color_grade=grade,
-                text_overlays=overlays,
-                voiceover=None,
-            )
-            scenes.append(scene)
-            cursor += scene_dur
+            for clip_idx in range(n_clips):
+                scene_id += 1
+
+                # Alternate: even clip_counter → video, odd → image (fall back if pool empty)
+                prefer_video = (clip_counter % 2 == 0)
+                pool = (video_pool if prefer_video else image_pool) or visual_assets
+                if not pool:
+                    logger.error("No visual assets available — skipping clip %d", scene_id)
+                    clip_counter += 1
+                    cursor += clip_dur
+                    continue
+
+                asset = self.match_asset_to_segment(segment, pool)
+                if asset is None:
+                    asset = pool[0]
+
+                is_first = (scene_id == 1)
+                is_last = (scene_id == total_clips)
+                t_in = TransitionType.FADE_IN if is_first else TransitionType.DISSOLVE
+                t_out = TransitionType.FADE_OUT if is_last else TransitionType.DISSOLVE
+
+                # Only show text overlay on the first clip of each segment
+                clip_overlays = overlays if clip_idx == 0 else []
+
+                scene = Scene(
+                    id=scene_id,
+                    segment_id=segment.id,
+                    asset_id=asset.id,
+                    asset_path=asset.local_path or "",
+                    start_time=cursor,
+                    end_time=cursor + clip_dur,
+                    duration_sec=clip_dur,
+                    transition_in=t_in,
+                    transition_out=t_out,
+                    color_grade=grade,
+                    text_overlays=clip_overlays,
+                    voiceover=None,
+                )
+                scenes.append(scene)
+                cursor += clip_dur
+                clip_counter += 1
 
         # Post-processing: dedup + temperature smoothing + coherence scoring
         scenes, asset_map = self._post_process_timeline(scenes, script.segments, visual_assets)

@@ -64,19 +64,20 @@ class ResearchModule:
         duration_min = float(meta.get("duration_min", 5.0))
         logger.info("Module 1: researching topic %r (%.1f min)", topic, duration_min)
 
-        # Scale fetch budget to video length:
-        #   ≤0.5 min → 3 assets/source, 2 queries
-        #   ≤2 min   → 5 assets/source, 3 queries
-        #   >2 min   → 8 assets/source, 4 queries
+        # Scale fetch budget to video length.
+        # Rule: need 1 video + 1 image per 5 sec, fetch ~4× that for variety after filtering.
+        #   ≤0.5 min (30s) → 6 clips → need 12 each type → 5/source, 3 queries
+        #   ≤2 min         → 24 clips → 8/source, 4 queries
+        #   >2 min         → 48+ clips → 10/source, 5 queries
         if duration_min <= 0.5:
-            per_source = 3
-            max_queries = 2
-        elif duration_min <= 2.0:
             per_source = 5
             max_queries = 3
-        else:
-            per_source = _ASSETS_PER_SOURCE
+        elif duration_min <= 2.0:
+            per_source = 8
             max_queries = 4
+        else:
+            per_source = 10
+            max_queries = 5
 
         # Build a diverse set of search queries — topic + extracted sub-queries
         # Also incorporate B-roll keywords from script.json if already generated

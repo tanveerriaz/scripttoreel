@@ -253,7 +253,8 @@ def test_orchestration_json_valid_schema(tmp_project):
     assert out.exists()
     raw = json.loads(out.read_text())
     loaded = Orchestration(**raw)
-    assert len(loaded.scenes) == 3
+    # 3 segments × 10s each → 2 clips per segment (≤5s each) → 6 scenes
+    assert len(loaded.scenes) == 6
 
 
 def test_voiceover_volume_is_1(tmp_project):
