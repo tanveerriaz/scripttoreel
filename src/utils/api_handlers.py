@@ -152,7 +152,7 @@ class PixabayClient(_BaseClient):
             return []
         data = self._get(
             f"{self.BASE_URL}/videos/",
-            params={"key": self.api_key, "q": query, "per_page": per_page, "orientation": "horizontal"},
+            params={"key": self.api_key, "q": query, "per_page": per_page, "orientation": "horizontal", "safesearch": "true"},
         )
         return [self._map_video(v, query) for v in data.get("hits", [])]
 
@@ -162,7 +162,7 @@ class PixabayClient(_BaseClient):
             return []
         data = self._get(
             f"{self.BASE_URL}/",
-            params={"key": self.api_key, "q": query, "per_page": per_page, "orientation": "horizontal", "image_type": "photo"},
+            params={"key": self.api_key, "q": query, "per_page": per_page, "orientation": "horizontal", "image_type": "photo", "safesearch": "true"},
         )
         return [self._map_image(img, query) for img in data.get("hits", [])]
 

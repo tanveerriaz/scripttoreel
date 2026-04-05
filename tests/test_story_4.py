@@ -276,7 +276,7 @@ def test_voiceover_volume_is_1(tmp_project):
         assert track.volume == 1.0
 
 
-def test_music_volume_is_0_12(tmp_project):
+def test_music_volume_is_0_06(tmp_project):
     # Create a fake background music asset
     music_path = tmp_project / "assets" / "audio" / "bg_music.mp3"
     music_path.touch()
@@ -304,4 +304,4 @@ def test_music_volume_is_0_12(tmp_project):
     orch = module.run()
 
     if orch.background_music:
-        assert abs(orch.background_music.volume - 0.12) < 0.001
+        assert abs(orch.background_music.volume - 0.06) < 0.001

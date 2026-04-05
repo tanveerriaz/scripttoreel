@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 # Audio levels
 _VOICEOVER_VOLUME = 1.0
-_MUSIC_VOLUME = 0.12
+_MUSIC_VOLUME = 0.06
 _SFX_VOLUME = 0.4
 
 

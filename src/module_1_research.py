@@ -32,6 +32,16 @@ logger = logging.getLogger(__name__)
 
 _ASSETS_PER_SOURCE = 8   # how many assets to fetch per query per source
 
+# Tags that indicate an asset is a cartoon, 3D render, illustration, or contains
+# inappropriate content. Assets matching any of these are silently dropped.
+_FORBIDDEN_TAGS: frozenset[str] = frozenset({
+    "3d", "3d render", "3d rendering", "3d rendered", "cgi",
+    "cartoon", "animated", "animation", "anime",
+    "illustration", "clipart", "clip art", "drawing", "sketch",
+    "vector", "vector art", "digital art", "artwork",
+    "nude", "naked", "nudity", "topless", "adult",
+})
+
 
 class ResearchModule:
     def __init__(self, project_dir: Path, api_keys: Optional[dict] = None):
@@ -186,6 +196,11 @@ class ResearchModule:
         """Call a search function; on APIKeyError or network error, warn and return []."""
         try:
             results = fn(query, per_page=_ASSETS_PER_SOURCE)
+            before = len(results)
+            results = [a for a in results if not self._has_forbidden_tags(a)]
+            dropped = before - len(results)
+            if dropped:
+                logger.info("%s: dropped %d asset(s) with forbidden tags", label, dropped)
             logger.info("%s: found %d results", label, len(results))
             return results
         except APIKeyError as e:
@@ -194,6 +209,12 @@ class ResearchModule:
         except Exception as e:
             logger.warning("Error searching %s: %s", label, e)
             return []
+
+    @staticmethod
+    def _has_forbidden_tags(asset: Asset) -> bool:
+        """Return True if any of the asset's visual_tags match _FORBIDDEN_TAGS."""
+        tags = {t.lower().strip() for t in (asset.visual_tags or [])}
+        return bool(tags & _FORBIDDEN_TAGS)
 
     # ------------------------------------------------------------------
     # Download
