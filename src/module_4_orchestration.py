@@ -38,8 +38,9 @@ _SFX_VOLUME = 0.4
 
 
 class OrchestrationModule:
-    def __init__(self, project_dir: Path):
+    def __init__(self, project_dir: Path, skip_director: bool = False):
         self.project_dir = Path(project_dir)
+        self.skip_director = skip_director
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -69,9 +70,21 @@ class OrchestrationModule:
             voiceover_tracks=voiceover_tracks,
         )
 
+        if not self.skip_director:
+            orch = self._run_visual_director(orch)
+
         self.save_orchestration(orch)
         self._update_status(ModuleStatus.COMPLETE)
         return orch
+
+    def _run_visual_director(self, orch: Orchestration) -> Orchestration:
+        """Run VisualDirector coherence review on the orchestration plan."""
+        try:
+            from src.ai_director import VisualDirector
+            return VisualDirector().review(orch)
+        except Exception as e:
+            logger.warning("VisualDirector review failed: %s — using original plan", e)
+            return orch
 
     # ------------------------------------------------------------------
     # Story 4.1 — Asset matching

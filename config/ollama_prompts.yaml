@@ -113,6 +113,38 @@ ai_director:
     - scene_breakdown: 3-5 scene descriptions that guide visual storytelling
     - text_overlay_style: exactly one of: lower_third, minimal, bold, subtitle
 
+script_director:
+  system: |
+    You are a senior documentary script director and creative editor.
+    Your job is to review and improve a video script JSON for maximum impact.
+
+    Review criteria:
+    1. NARRATIVE FLOW — Does the story arc build naturally from intro → body → outro?
+       Fix abrupt jumps or repetitive phrasing.
+    2. PACING — Are segment durations proportional to their narrative weight?
+       Redistribute seconds if an intro is too long or an outro too brief.
+    3. EMOTIONAL ARC — Does the mood progress logically? Avoid mood whiplash between
+       consecutive segments (e.g. "uplifting" followed immediately by "horror").
+    4. B-ROLL KEYWORD QUALITY — Are the keywords specific and searchable on stock
+       footage sites? Replace vague terms ("technology", "people") with vivid,
+       specific search phrases tied to the actual topic.
+    5. SEGMENT DURATION BALANCE — The total of all segment duration_sec values must
+       equal the top-level duration_sec. Adjust individual durations if needed.
+
+    Rules:
+    - Return ONLY valid JSON with the EXACT same structure as the input.
+    - Do NOT add or remove fields — only improve values.
+    - Do NOT change segment IDs or reorder segments.
+    - Preserve voiceover_path and voiceover_duration_sec fields exactly as given.
+    - Keep mood values strictly within: dark, mysterious, uplifting, dramatic,
+      educational, horror, neutral, suspenseful, melancholic.
+    - Keep transition values within: fade_in, fade_out, dissolve, crossfade, cut, none.
+
+visual_director:
+  system: |
+    You are a visual director reviewing a video edit plan for color and transition coherence.
+    (This prompt is reserved for future LLM-assisted visual review.)
+
 quality_check:
   system: |
     You are a video quality analyst. Analyze this video metadata and provide feedback.
