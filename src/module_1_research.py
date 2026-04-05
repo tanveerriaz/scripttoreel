@@ -116,25 +116,41 @@ class ResearchModule:
         """
         queries: list[str] = []
 
-        # 1. Pull B-roll keywords from existing script.json (re-runs)
-        script_path = self.project_dir / "script.json"
-        if script_path.exists():
+        # 1a. Pull AI Director search_keywords from production_plan.json (highest priority)
+        plan_path = self.project_dir / "production_plan.json"
+        if plan_path.exists():
             try:
-                script_data = json.loads(script_path.read_text())
-                kw_set: dict[str, None] = {}  # ordered dedup
-                for seg in script_data.get("segments", []):
-                    for kw in seg.get("b_roll_keywords", []):
-                        kw = kw.strip()
-                        if kw and kw.lower() not in ("technology", "science", "people",
-                                                       "nature", "business", "future",
-                                                       "innovation", "modern"):
-                            kw_set[kw] = None
-                if kw_set:
-                    # Take up to 3 distinct keywords as separate queries
-                    queries = list(kw_set.keys())[:3]
-                    logger.info("Using %d B-roll keywords from script.json", len(queries))
+                plan_data = json.loads(plan_path.read_text())
+                plan_keywords = [
+                    kw.strip() for kw in plan_data.get("search_keywords", [])
+                    if kw.strip()
+                ]
+                if plan_keywords:
+                    queries = plan_keywords[:4]
+                    logger.info("Using %d AI Director keywords from production_plan.json", len(queries))
             except Exception as e:
-                logger.warning("Could not read script.json for keywords: %s", e)
+                logger.warning("Could not read production_plan.json for keywords: %s", e)
+
+        # 1b. Pull B-roll keywords from existing script.json (re-runs)
+        if not queries:
+            script_path = self.project_dir / "script.json"
+            if script_path.exists():
+                try:
+                    script_data = json.loads(script_path.read_text())
+                    kw_set: dict[str, None] = {}  # ordered dedup
+                    for seg in script_data.get("segments", []):
+                        for kw in seg.get("b_roll_keywords", []):
+                            kw = kw.strip()
+                            if kw and kw.lower() not in ("technology", "science", "people",
+                                                           "nature", "business", "future",
+                                                           "innovation", "modern"):
+                                kw_set[kw] = None
+                    if kw_set:
+                        # Take up to 3 distinct keywords as separate queries
+                        queries = list(kw_set.keys())[:3]
+                        logger.info("Using %d B-roll keywords from script.json", len(queries))
+                except Exception as e:
+                    logger.warning("Could not read script.json for keywords: %s", e)
 
         # 2. Extract specific terms from the topic itself
         topic_queries = _topic_to_queries(topic)

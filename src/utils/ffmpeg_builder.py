@@ -38,6 +38,18 @@ class FFmpegCommand:
         self._global_opts[key] = value
         return self
 
+    @staticmethod
+    def _ffmpeg_key(k: str) -> str:
+        """Convert Python kwarg names to ffmpeg option names.
+
+        Rules:
+        - Keys matching ``^[a-z]{1,2}_[vads]$`` map the trailing ``_X`` → ``:X``
+          so that e.g. ``c_v`` → ``c:v``, ``b_v`` → ``b:v``, ``c_a`` → ``c:a``.
+        - All other keys are passed through unchanged (``pix_fmt``, ``preset``, …).
+        """
+        import re
+        return re.sub(r"^([a-z]{1,2})_([vads])$", r"\1:\2", k)
+
     def build(self) -> list[str]:
         """Return the full argv list for ffmpeg."""
         cmd = ["ffmpeg"]
@@ -45,14 +57,18 @@ class FFmpegCommand:
         # Global options
         for k, v in self._global_opts.items():
             if v is True:
-                cmd.append(f"-{k}")
+                cmd.append(f"-{self._ffmpeg_key(k)}")
             elif v is not False and v is not None:
-                cmd.extend([f"-{k}", str(v)])
+                cmd.extend([f"-{self._ffmpeg_key(k)}", str(v)])
 
         # Inputs
         for path, opts in self._inputs:
             for k, v in opts.items():
-                cmd.extend([f"-{k}", str(v)])
+                fk = self._ffmpeg_key(k)
+                if v is True:
+                    cmd.append(f"-{fk}")
+                elif v is not False and v is not None:
+                    cmd.extend([f"-{fk}", str(v)])
             cmd.extend(["-i", path])
 
         # Filter complex
@@ -61,10 +77,11 @@ class FFmpegCommand:
 
         # Output options
         for k, v in self._output_opts.items():
+            fk = self._ffmpeg_key(k)
             if v is True:
-                cmd.append(f"-{k}")
+                cmd.append(f"-{fk}")
             elif v is not False and v is not None:
-                cmd.extend([f"-{k}", str(v)])
+                cmd.extend([f"-{fk}", str(v)])
 
         # Output path
         if self._output_path:

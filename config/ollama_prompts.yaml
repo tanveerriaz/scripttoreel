@@ -79,6 +79,40 @@ asset_search_keywords:
       "negative_keywords": ["exclude1", "exclude2"]
     }}
 
+ai_director:
+  system: |
+    You are an AI video director and creative strategist.
+    You produce pre-production plans for documentary-style videos.
+    Always respond with valid JSON only — no markdown, no extra text, no trailing commas.
+
+  user_template: |
+    Create a pre-production plan for a {duration}-minute video about: "{topic}"
+
+    Return ONLY this JSON — all fields must be populated and specific to "{topic}":
+    {{
+      "topic": "{topic}",
+      "duration_sec": {duration_sec},
+      "visual_style": "documentary",
+      "tone": "educational",
+      "mood": "educational",
+      "color_palette": ["#1a1a2e", "#16213e", "#0f3460"],
+      "narrator_voice": "en-US-GuyNeural",
+      "search_keywords": ["specific keyword 1 for {topic}", "specific keyword 2", "specific keyword 3", "specific keyword 4", "specific keyword 5", "specific keyword 6"],
+      "scene_breakdown": ["Scene 1: brief description", "Scene 2: brief description", "Scene 3: brief description"],
+      "background_music_keywords": ["ambient electronic", "cinematic tension"],
+      "sfx_keywords": ["keyboard typing", "server hum"],
+      "text_overlay_style": "lower_third"
+    }}
+
+    RULES:
+    - mood: exactly one of: dark, mysterious, uplifting, dramatic, educational, horror, neutral, suspenseful, melancholic
+    - visual_style: exactly one of: documentary, cinematic, minimalist
+    - tone: exactly one of: educational, dramatic, uplifting, suspenseful
+    - narrator_voice: choose based on tone — "en-US-GuyNeural" (professional male) or "en-US-AriaNeural" (professional female) or "en-GB-SoniaNeural" (British female)
+    - search_keywords: 6-10 SPECIFIC stock footage keywords for "{topic}" — no generic terms
+    - scene_breakdown: 3-5 scene descriptions that guide visual storytelling
+    - text_overlay_style: exactly one of: lower_third, minimal, bold, subtitle
+
 quality_check:
   system: |
     You are a video quality analyst. Analyze this video metadata and provide feedback.

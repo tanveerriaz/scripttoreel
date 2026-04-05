@@ -262,21 +262,45 @@ class ScriptModule:
         except ImportError as exc:
             raise RuntimeError("edge-tts not installed: pip install edge-tts") from exc
 
-        async def _synthesize() -> None:
+        async def _generate() -> None:
             communicate = edge_tts.Communicate(text, voice)
-            # edge-tts produces MP3; write to a temp file then convert to WAV
-            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-                tmp_path = Path(tmp.name)
-            try:
-                await communicate.save(str(tmp_path))
-                # Convert MP3 → WAV at 22050 Hz mono (consistent with piper output)
-                audio = AudioSegment.from_file(str(tmp_path), format="mp3")
-                audio = audio.set_frame_rate(22050).set_channels(1)
-                audio.export(str(out_path), format="wav")
-            finally:
-                tmp_path.unlink(missing_ok=True)
+            mp3_path = out_path.with_suffix(".mp3")
+            await communicate.save(str(mp3_path))
+            # Convert MP3 → WAV (22050 Hz mono, matching piper output)
+            subprocess.run(
+                [
+                    self._ffmpeg_bin(),
+                    "-y", "-i", str(mp3_path),
+                    "-ar", "22050", "-ac", "1",
+                    "-af", "highpass=f=80,lowpass=f=8000",
+                    str(out_path),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            mp3_path.unlink(missing_ok=True)
 
-        asyncio.run(_synthesize())
+        try:
+            asyncio.run(_generate())
+        except RuntimeError as exc:
+            # Already inside a running event loop (e.g. Jupyter) — use a thread
+            if "cannot run nested" in str(exc).lower() or "event loop is already running" in str(exc).lower():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    pool.submit(asyncio.run, _generate()).result()
+            else:
+                raise
+
+    @staticmethod
+    def _ffmpeg_bin() -> str:
+        """Return path to ffmpeg, checking homebrew if not in PATH."""
+        found = shutil.which("ffmpeg")
+        if found:
+            return found
+        for candidate in ("/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"):
+            if Path(candidate).exists():
+                return candidate
+        return "ffmpeg"  # let subprocess raise a clear error
 
     def _piper_tts(self, text: str, out_path: Path) -> None:
         """Generate audio with piper-tts (high-quality neural TTS).
@@ -333,7 +357,7 @@ class ScriptModule:
         )
         # Convert AIFF → WAV, upsample to 22050 Hz mono for consistency with piper
         subprocess.run(
-            ["ffmpeg", "-y", "-i", str(aiff),
+            [self._ffmpeg_bin(), "-y", "-i", str(aiff),
              "-ar", "22050", "-ac", "1",
              "-af", "highpass=f=80,lowpass=f=8000",  # gentle EQ to reduce tinny quality
              str(out_path)],
