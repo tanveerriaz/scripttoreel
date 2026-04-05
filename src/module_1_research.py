@@ -61,12 +61,27 @@ class ResearchModule:
 
         meta = json.loads(project_json.read_text())
         topic = meta.get("topic", "")
-        logger.info("Module 1: researching topic %r", topic)
+        duration_min = float(meta.get("duration_min", 5.0))
+        logger.info("Module 1: researching topic %r (%.1f min)", topic, duration_min)
+
+        # Scale fetch budget to video length:
+        #   ≤0.5 min → 3 assets/source, 2 queries
+        #   ≤2 min   → 5 assets/source, 3 queries
+        #   >2 min   → 8 assets/source, 4 queries
+        if duration_min <= 0.5:
+            per_source = 3
+            max_queries = 2
+        elif duration_min <= 2.0:
+            per_source = 5
+            max_queries = 3
+        else:
+            per_source = _ASSETS_PER_SOURCE
+            max_queries = 4
 
         # Build a diverse set of search queries — topic + extracted sub-queries
         # Also incorporate B-roll keywords from script.json if already generated
-        queries = self._build_search_queries(topic)
-        logger.info("Search queries: %s", queries)
+        queries = self._build_search_queries(topic)[:max_queries]
+        logger.info("Search queries (%d): %s", len(queries), queries)
 
         all_assets: list[Asset] = []
         seen_ids: set = set()  # deduplicate across queries
@@ -83,11 +98,11 @@ class ResearchModule:
         freesound = FreesoundClient(self.api_keys.get("FREESOUND_API_KEY"))
 
         for q in queries:
-            _add(self._safe_search(pexels.search_videos,  q, f"Pexels videos [{q}]"))
-            _add(self._safe_search(pexels.search_images,  q, f"Pexels images [{q}]"))
-            _add(self._safe_search(pixabay.search_videos, q, f"Pixabay videos [{q}]"))
-            _add(self._safe_search(pixabay.search_images, q, f"Pixabay images [{q}]"))
-            _add(self._safe_search(unsplash.search_photos, q, f"Unsplash [{q}]"))
+            _add(self._safe_search(pexels.search_videos,  q, f"Pexels videos [{q}]",  per_source))
+            _add(self._safe_search(pexels.search_images,  q, f"Pexels images [{q}]",  per_source))
+            _add(self._safe_search(pixabay.search_videos, q, f"Pixabay videos [{q}]", per_source))
+            _add(self._safe_search(pixabay.search_images, q, f"Pixabay images [{q}]", per_source))
+            _add(self._safe_search(unsplash.search_photos, q, f"Unsplash [{q}]",       per_source))
 
         # SFX: ambient sounds for scene atmosphere
         _add(self._safe_search(freesound.search_sounds, topic, "Freesound SFX"))
@@ -192,10 +207,10 @@ class ResearchModule:
     # Search helpers
     # ------------------------------------------------------------------
 
-    def _safe_search(self, fn, query: str, label: str) -> list[Asset]:
+    def _safe_search(self, fn, query: str, label: str, per_page: int = _ASSETS_PER_SOURCE) -> list[Asset]:
         """Call a search function; on APIKeyError or network error, warn and return []."""
         try:
-            results = fn(query, per_page=_ASSETS_PER_SOURCE)
+            results = fn(query, per_page=per_page)
             before = len(results)
             results = [a for a in results if not self._has_forbidden_tags(a)]
             dropped = before - len(results)
