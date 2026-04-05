@@ -207,7 +207,7 @@ class ScriptModule:
     _PIPER_MODEL = Path(__file__).parent.parent / "models" / "piper" / "en_US-lessac-high.onnx"
 
     def generate_voiceover_segment(self, text: str, segment_id: int) -> Path:
-        """Generate WAV for one segment. Tries piper → macOS say → silence."""
+        """Generate WAV for one segment. Tries edge-tts → piper → macOS say → silence."""
         out = self._audio_dir / f"voiceover_{segment_id}.wav"
         if out.exists() and out.stat().st_size > 1000:
             return out
@@ -218,12 +218,57 @@ class ScriptModule:
             AudioSegment.silent(duration=500).export(str(out), format="wav")
             return out
 
+        # 1. Try edge-tts first (highest quality, no local model needed)
         try:
-            self._piper_tts(text, out)
+            logger.info("Segment %d: Using edge-tts", segment_id)
+            self._edge_tts(text, out)
+            logger.info("Segment %d: edge-tts succeeded", segment_id)
+            return out
         except Exception as e:
-            logger.warning("Piper TTS failed (segment %d): %s — using macOS say", segment_id, e)
-            self._macos_say_fallback(text, out)
+            logger.warning("Segment %d: edge-tts failed: %s — trying piper", segment_id, e)
+
+        # 2. Try piper
+        try:
+            logger.info("Segment %d: Using piper TTS", segment_id)
+            self._piper_tts(text, out)
+            logger.info("Segment %d: piper succeeded", segment_id)
+            return out
+        except Exception as e:
+            logger.warning("Segment %d: piper TTS failed: %s — using macOS say", segment_id, e)
+
+        # 3. Fall back to macOS say
+        logger.info("Segment %d: Using macOS say (fallback)", segment_id)
+        self._macos_say_fallback(text, out)
         return out
+
+    def _edge_tts(self, text: str, out_path: Path) -> None:
+        """Generate audio with edge-tts (Microsoft Edge neural TTS, async).
+
+        Outputs MP3 then converts to WAV via pydub.
+        Voice: en-US-AriaNeural — natural, expressive narrator voice.
+        """
+        import asyncio
+        try:
+            import edge_tts
+        except ImportError as e:
+            raise RuntimeError("edge-tts not installed") from e
+
+        mp3_path = out_path.with_suffix(".mp3")
+
+        async def _run() -> None:
+            communicate = edge_tts.Communicate(text, voice="en-US-AriaNeural")
+            await communicate.save(str(mp3_path))
+
+        asyncio.run(_run())
+
+        if not mp3_path.exists() or mp3_path.stat().st_size < 100:
+            raise RuntimeError(f"edge-tts produced no output at {mp3_path}")
+
+        # Convert MP3 → WAV (22050 Hz mono, consistent with piper output)
+        audio = AudioSegment.from_mp3(str(mp3_path))
+        audio = audio.set_frame_rate(22050).set_channels(1)
+        audio.export(str(out_path), format="wav")
+        mp3_path.unlink(missing_ok=True)
 
     def _piper_tts(self, text: str, out_path: Path) -> None:
         """Generate audio with piper-tts (high-quality neural TTS).
