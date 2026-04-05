@@ -21,9 +21,6 @@ from src.project_manager import load_project, update_pipeline_status
 from src.utils.api_handlers import (
     APIKeyError,
     FreesoundClient,
-    PexelsClient,
-    PixabayClient,
-    UnsplashClient,
 )
 from src.utils.config_loader import load_api_keys
 from src.utils.json_schemas import Asset, AssetType, ModuleStatus
@@ -95,17 +92,7 @@ class ResearchModule:
                     seen_ids.add(a.id)
                     all_assets.append(a)
 
-        pexels  = PexelsClient(self.api_keys.get("PEXELS_API_KEY"))
-        pixabay = PixabayClient(self.api_keys.get("PIXABAY_API_KEY"))
-        unsplash = UnsplashClient(self.api_keys.get("UNSPLASH_ACCESS_KEY"))
         freesound = FreesoundClient(self.api_keys.get("FREESOUND_API_KEY"))
-
-        for q in queries:
-            _add(self._safe_search(pexels.search_videos,  q, f"Pexels videos [{q}]",  per_source))
-            _add(self._safe_search(pexels.search_images,  q, f"Pexels images [{q}]",  per_source))
-            _add(self._safe_search(pixabay.search_videos, q, f"Pixabay videos [{q}]", per_source))
-            _add(self._safe_search(pixabay.search_images, q, f"Pixabay images [{q}]", per_source))
-            _add(self._safe_search(unsplash.search_photos, q, f"Unsplash [{q}]",       per_source))
 
         # SFX: ambient sounds for scene atmosphere
         _add(self._safe_search(freesound.search_sounds, topic, "Freesound SFX"))
@@ -124,10 +111,13 @@ class ResearchModule:
             except Exception:
                 pass
 
+        # SDXL is the sole visual source — generate enough images for full coverage.
+        # Rule: need 1 image per 5 sec of video → scale num_images by duration.
+        images_per_query = max(3, round((duration_min * 60) / 5 / max_queries))
         try:
             img_dir = self.project_dir / "assets" / "raw" / "image"
             sdxl = LocalSDXLClient(output_dir=img_dir)
-            ai_queries = queries[:3]
+            total_generated = 0
             with Progress(
                 TextColumn("[magenta]   Generating AI images[/magenta]"),
                 BarColumn(bar_width=36),
@@ -135,18 +125,19 @@ class ResearchModule:
                 TextColumn("[dim]{task.completed}/{task.total} prompts[/dim]"),
                 transient=True,
             ) as progress:
-                task = progress.add_task("", total=len(ai_queries))
-                for q in ai_queries:
+                task = progress.add_task("", total=len(queries))
+                for q in queries:
                     prompt = build_image_prompt(q, topic, tone)
-                    ai_assets = sdxl.generate(prompt, num_images=2)
+                    ai_assets = sdxl.generate(prompt, num_images=images_per_query)
                     _add(ai_assets)
-                    logger.debug("SDXL: generated %d images for %r", len(ai_assets), q)
+                    total_generated += len(ai_assets)
+                    logger.debug("SDXL: %d images for %r", len(ai_assets), q)
                     progress.advance(task)
-            logger.info("SDXL: added %d AI-generated images", len(ai_queries) * 2)
+            logger.info("SDXL: generated %d AI images total", total_generated)
         except RuntimeError as e:
-            logger.info("SDXL skipped (%s) — using stock assets only", e)
+            logger.warning("SDXL skipped — %s", e)
         except Exception as e:
-            logger.warning("SDXL generation failed: %s — using stock assets only", e)
+            logger.warning("SDXL generation failed: %s", e)
 
         logger.info("Found %d unique assets total; starting downloads", len(all_assets))
 
