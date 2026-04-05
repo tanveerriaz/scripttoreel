@@ -15,7 +15,7 @@ from typing import Optional
 from urllib.parse import urlparse
 
 import requests
-from tqdm import tqdm
+from rich.progress import Progress, BarColumn, TaskProgressColumn, TextColumn, TimeRemainingColumn
 
 from src.project_manager import load_project, update_pipeline_status
 from src.utils.api_handlers import (
@@ -114,11 +114,21 @@ class ResearchModule:
 
         logger.info("Found %d unique assets total; starting downloads", len(all_assets))
 
-        # Download all assets
+        # Download all assets — single-line Rich progress bar
         downloaded: list[Asset] = []
-        for asset in tqdm(all_assets, desc="Downloading assets", unit="file"):
-            updated = self.download_asset(asset)
-            downloaded.append(updated)
+        with Progress(
+            TextColumn("[cyan]   Downloading assets[/cyan]"),
+            BarColumn(bar_width=36),
+            TaskProgressColumn(),
+            TextColumn("[dim]{task.completed}/{task.total} files[/dim]"),
+            TimeRemainingColumn(),
+            transient=True,  # clears the bar line when done
+        ) as progress:
+            task = progress.add_task("", total=len(all_assets))
+            for asset in all_assets:
+                updated = self.download_asset(asset)
+                downloaded.append(updated)
+                progress.advance(task)
 
         self.save_assets_raw(downloaded)
 
@@ -261,7 +271,7 @@ class ResearchModule:
                 with open(dest, "wb") as fh:
                     for chunk in resp.iter_content(chunk_size=8192):
                         fh.write(chunk)
-            logger.info("Downloaded %s → %s", asset.id, dest)
+            logger.debug("Downloaded %s → %s", asset.id, dest)
             asset = asset.model_copy(update={"local_path": str(dest), "filename": filename})
         except Exception as e:
             logger.warning("Failed to download %s (%s): %s", asset.id, asset.source_url, e)
