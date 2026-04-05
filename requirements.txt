@@ -30,13 +30,16 @@ flask>=3.0.0
 # Video rendering
 moviepy>=2.0.0
 
-# TTS (edge-tts primary, Coqui fallback)
+# TTS — priority chain: Kokoro-ONNX → edge-tts → piper → macOS say
 edge-tts>=6.1.9
-TTS>=0.22.0
+kokoro-onnx>=0.3.0     # local neural TTS, natural prosody, ~95MB model files
 
-# Deep learning (for TTS backend)
+# AI image generation — local SDXL via Apple MPS (M-series Mac)
 torch>=2.1.0
 torchaudio>=2.1.0
+diffusers>=0.27.0
+transformers>=4.38.0
+accelerate>=0.27.0
 
 # Utilities
 numpy>=1.26.0

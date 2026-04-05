@@ -60,6 +60,13 @@ script_generation:
     - Every segment MUST have non-empty text narration
     - b_roll_keywords: 4-6 per segment, ALL must be specific to the topic "{topic}"
 
+    GENRE TONE RULES — detect genre from the topic and apply to every segment:
+    - thriller / action / spy / heist / chase: SHORT PUNCHY sentences (8-12 words max). Build tension sentence-by-sentence. Cinematic visceral language. Imply, never state. Set overall_pacing="fast", background_music_style="suspenseful".
+    - horror / haunted / supernatural: Dread and atmosphere. Clipped sentences. Never over-explain. Set mood="horror" or "mysterious", background_music_style="suspenseful".
+    - birthday / celebration / wedding / party / anniversary: Warm, joyful, conversational. Upbeat rhythm. Short paragraphs. Set background_music_style="uplifting", overall_pacing="medium".
+    - documentary / history / education / science / nature: Authoritative measured voice. Facts then insight. Medium sentences. Set overall_pacing="medium", background_music_style="ambient".
+    - Apply the matching rule to ALL segments including intro and outro.
+
 asset_search_keywords:
   system: |
     You are a stock footage researcher. Given a video topic, generate search keywords

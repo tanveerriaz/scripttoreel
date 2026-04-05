@@ -33,6 +33,23 @@ AVAILABLE_VOICES = [
 ]
 DEFAULT_NARRATOR_VOICE = "en-US-GuyNeural"
 
+# ---------------------------------------------------------------------------
+# Kokoro-ONNX TTS (local, free, natural voice)
+# ---------------------------------------------------------------------------
+_KOKORO_MODEL  = Path(__file__).parent.parent / "models" / "kokoro" / "kokoro-v1.0.int8.onnx"
+_KOKORO_VOICES = Path(__file__).parent.parent / "models" / "kokoro" / "voices-v1.0.bin"
+
+# Maps edge-tts voice names → Kokoro voice IDs
+_KOKORO_VOICE_MAP: dict[str, str] = {
+    "en-US-GuyNeural":         "am_adam",    # American male — documentary narrator
+    "en-US-ChristopherNeural": "am_michael", # American male — authoritative
+    "en-US-JennyNeural":       "af_sarah",   # American female
+    "en-US-AriaNeural":        "af_bella",   # American female — expressive
+    "en-GB-RyanNeural":        "bm_george",  # British male
+    "en-GB-SoniaNeural":       "bf_emma",    # British female
+}
+_KOKORO_DEFAULT_VOICE = "am_adam"
+
 from src.project_manager import update_pipeline_status
 from src.utils.config_loader import load_api_keys, load_ollama_prompts
 from src.utils.json_schemas import (
@@ -331,7 +348,9 @@ class ScriptModule:
     ) -> Path:
         """Generate WAV for one segment.
 
-        Priority: edge-tts (neural) → piper → macOS say → silence.
+        Priority: Kokoro-ONNX (local neural) → edge-tts → piper → macOS say.
+        Kokoro gives the most natural prosody when model files are present.
+        Each step falls back gracefully if unavailable.
         """
         out = self._audio_dir / f"voiceover_{segment_id}.wav"
         if out.exists() and out.stat().st_size > 1000:
@@ -345,7 +364,16 @@ class ScriptModule:
 
         selected_voice = voice or DEFAULT_NARRATOR_VOICE
 
-        # 1. edge-tts (primary — high-quality neural voices)
+        # 1. Kokoro-ONNX (local, free, most natural)
+        try:
+            logger.info("Segment %d: Using Kokoro-ONNX TTS", segment_id)
+            self._kokoro_tts(text, out, selected_voice)
+            logger.info("Segment %d: Kokoro-ONNX succeeded", segment_id)
+            return out
+        except Exception as e:
+            logger.warning("Kokoro TTS failed (segment %d): %s — trying edge-tts", segment_id, e)
+
+        # 2. edge-tts (neural cloud voices)
         try:
             logger.info("Segment %d: Using edge-tts (%s)", segment_id, selected_voice)
             self._edge_tts(text, out, selected_voice)
@@ -354,7 +382,7 @@ class ScriptModule:
         except Exception as e:
             logger.warning("edge-tts failed (segment %d): %s — trying piper", segment_id, e)
 
-        # 2. piper (fallback)
+        # 3. piper (local neural fallback)
         try:
             logger.info("Segment %d: Using piper TTS", segment_id)
             self._piper_tts(text, out)
@@ -363,10 +391,61 @@ class ScriptModule:
         except Exception as e:
             logger.warning("Piper TTS failed (segment %d): %s — using macOS say", segment_id, e)
 
-        # 3. macOS say (last resort)
+        # 4. macOS say (last resort)
         logger.info("Segment %d: Using macOS say (fallback)", segment_id)
         self._macos_say_fallback(text, out)
         return out
+
+    def _kokoro_tts(
+        self, text: str, out_path: Path, voice: str = DEFAULT_NARRATOR_VOICE
+    ) -> None:
+        """Generate audio with Kokoro-ONNX (local, free, natural voice).
+
+        Requires model files in models/kokoro/:
+            kokoro-v0_19.onnx  (~90 MB)
+            voices.bin         (~5 MB)
+        Download from: https://github.com/thewh1teagle/kokoro-onnx/releases/latest
+
+        Raises FileNotFoundError if model files missing → triggers next fallback.
+        Raises RuntimeError  if kokoro-onnx not installed → triggers next fallback.
+        """
+        if not _KOKORO_MODEL.exists() or not _KOKORO_VOICES.exists():
+            raise FileNotFoundError(
+                f"Kokoro model files not found at {_KOKORO_MODEL.parent}. "
+                "Download kokoro-v1.0.int8.onnx and voices-v1.0.bin from "
+                "https://github.com/thewh1teagle/kokoro-onnx/releases/latest"
+            )
+
+        try:
+            from kokoro_onnx import Kokoro  # noqa: PLC0415
+            import soundfile as sf          # noqa: PLC0415
+        except ImportError as exc:
+            raise RuntimeError(
+                "kokoro-onnx not installed: pip install kokoro-onnx soundfile"
+            ) from exc
+
+        kokoro_voice = _KOKORO_VOICE_MAP.get(voice, _KOKORO_DEFAULT_VOICE)
+        k = Kokoro(str(_KOKORO_MODEL), str(_KOKORO_VOICES))
+        samples, sample_rate = k.create(text, voice=kokoro_voice, speed=1.0)
+
+        # Write raw samples to a temp file then re-encode to 22050 Hz mono
+        # (consistent with edge-tts / piper output format)
+        tmp = Path(tempfile.mktemp(suffix=".wav"))
+        try:
+            sf.write(str(tmp), samples, sample_rate)
+            subprocess.run(
+                [
+                    self._ffmpeg_bin(),
+                    "-y", "-i", str(tmp),
+                    "-ar", "22050", "-ac", "1",
+                    "-af", "highpass=f=80,lowpass=f=8000",
+                    str(out_path),
+                ],
+                check=True,
+                capture_output=True,
+            )
+        finally:
+            tmp.unlink(missing_ok=True)
 
     def _edge_tts(self, text: str, out_path: Path, voice: str = DEFAULT_NARRATOR_VOICE) -> None:
         """Generate audio with Microsoft Edge TTS (neural voices via edge-tts package)."""

@@ -27,6 +27,7 @@ from src.utils.api_handlers import (
 )
 from src.utils.config_loader import load_api_keys
 from src.utils.json_schemas import Asset, AssetType, ModuleStatus
+from src.utils.local_image_generator import LocalSDXLClient, build_image_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,39 @@ class ResearchModule:
 
         # Background music: dedicated search — longer tracks tagged role=MUSIC
         _add(self._safe_search(freesound.search_music, topic, "Freesound music"))
+
+        # AI image generation — locally via SDXL + MPS (graceful skip if not installed)
+        tone = ""
+        plan_path = self.project_dir / "production_plan.json"
+        if plan_path.exists():
+            try:
+                tone = json.loads(plan_path.read_text()).get("tone", "")
+            except Exception:
+                pass
+
+        try:
+            img_dir = self.project_dir / "assets" / "raw" / "image"
+            sdxl = LocalSDXLClient(output_dir=img_dir)
+            ai_queries = queries[:3]
+            with Progress(
+                TextColumn("[magenta]   Generating AI images[/magenta]"),
+                BarColumn(bar_width=36),
+                TaskProgressColumn(),
+                TextColumn("[dim]{task.completed}/{task.total} prompts[/dim]"),
+                transient=True,
+            ) as progress:
+                task = progress.add_task("", total=len(ai_queries))
+                for q in ai_queries:
+                    prompt = build_image_prompt(q, topic, tone)
+                    ai_assets = sdxl.generate(prompt, num_images=2)
+                    _add(ai_assets)
+                    logger.debug("SDXL: generated %d images for %r", len(ai_assets), q)
+                    progress.advance(task)
+            logger.info("SDXL: added %d AI-generated images", len(ai_queries) * 2)
+        except RuntimeError as e:
+            logger.info("SDXL skipped (%s) — using stock assets only", e)
+        except Exception as e:
+            logger.warning("SDXL generation failed: %s — using stock assets only", e)
 
         logger.info("Found %d unique assets total; starting downloads", len(all_assets))
 

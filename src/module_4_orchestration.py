@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from pathlib import Path
 from typing import Optional
 
@@ -39,6 +40,40 @@ _SFX_VOLUME = 0.4
 # Visual cut cadence: each scene is at most this many seconds before switching asset.
 # Alternates video → image → video → image for visual variety.
 _MAX_CLIP_SEC = 5.0
+
+# Genre-aware clip duration ranges (min_sec, max_sec).
+# Detected from script.topic + plan.tone at timeline build time.
+_GENRE_CLIP_RANGES: dict[str, tuple[float, float]] = {
+    "thriller":    (2.5, 4.0),   # fast cuts — high tension
+    "horror":      (3.0, 5.0),   # slightly longer for dread buildup
+    "action":      (2.0, 3.5),   # very fast — kinetic energy
+    "celebration": (3.5, 5.5),   # moderate, energetic
+    "documentary": (4.5, 7.0),   # slower, contemplative
+    "default":     (3.0, 6.0),   # varied — avoids mechanical uniform pacing
+}
+
+
+def _detect_genre(topic: str, plan=None) -> str:
+    """Detect genre from topic text and production plan tone.
+
+    Returns one of: 'thriller', 'horror', 'action', 'celebration', 'documentary', 'default'.
+    """
+    combined = topic.lower()
+    if plan:
+        tone = getattr(plan, "tone", "") or ""
+        combined += " " + (tone.value if hasattr(tone, "value") else str(tone)).lower()
+
+    if any(k in combined for k in ("thriller", "suspense", "spy", "heist", "chase")):
+        return "thriller"
+    if any(k in combined for k in ("horror", "haunted", "ghost", "terror", "scary")):
+        return "horror"
+    if any(k in combined for k in ("action", "fight", "combat", "battle", "war")):
+        return "action"
+    if any(k in combined for k in ("birthday", "celebration", "wedding", "party", "anniversary")):
+        return "celebration"
+    if any(k in combined for k in ("documentary", "history", "science", "education", "nature")):
+        return "documentary"
+    return "default"
 
 
 class OrchestrationModule:
@@ -160,6 +195,22 @@ class OrchestrationModule:
         script_total = sum(s.duration_sec for s in script.segments) or 1.0
         scale = (total_duration / script_total) if total_duration > 0 else 1.0
 
+        # Genre-aware clip pacing — detect once, use throughout
+        genre = _detect_genre(script.topic, plan)
+        min_clip, max_clip = _GENRE_CLIP_RANGES.get(genre, _GENRE_CLIP_RANGES["default"])
+        logger.info("build_timeline: genre=%s  clip_range=%.1f–%.1fs", genre, min_clip, max_clip)
+
+        def _clip_target(seg_idx: int) -> float:
+            """Target clip duration for a segment — oscillates within genre range
+            to avoid the mechanical uniform-cut feel."""
+            return min_clip + (max_clip - min_clip) * (0.5 + 0.5 * math.sin(seg_idx))
+
+        # Pre-compute total clip count for first/last detection
+        total_clips = sum(
+            max(1, round(round(s.duration_sec * scale, 3) / _clip_target(i)))
+            for i, s in enumerate(script.segments)
+        )
+
         scenes: list[Scene] = []
         cursor = 0.0
         scene_id = 0
@@ -168,8 +219,8 @@ class OrchestrationModule:
         for seg_idx, segment in enumerate(script.segments):
             seg_dur = round(segment.duration_sec * scale, 3)
 
-            # Subdivide long segments into ≤_MAX_CLIP_SEC clips
-            n_clips = max(1, round(seg_dur / _MAX_CLIP_SEC))
+            # Subdivide segment into clips, targeting genre-appropriate duration
+            n_clips = max(1, round(seg_dur / _clip_target(seg_idx)))
             clip_dur = round(seg_dur / n_clips, 3)
 
             # Color grade is constant across sub-clips of the same segment
@@ -179,7 +230,6 @@ class OrchestrationModule:
             )
 
             overlays = self._build_text_overlays(segment)
-            total_clips = sum(max(1, round(round(s.duration_sec * scale, 3) / _MAX_CLIP_SEC)) for s in script.segments)
 
             for clip_idx in range(n_clips):
                 scene_id += 1
