@@ -52,19 +52,23 @@ class OrchestrationModule:
 
         logger.info("Module 4: mapping %d segments to %d assets", len(script.segments), len(assets))
 
+        # Load production plan for visual_style / tone overrides
+        plan = self._load_production_plan()
+
         voiceover_tracks = self._build_voiceover_tracks(script)
         # Use actual voiceover duration so video length matches the audio
         total_duration = self._voiceover_duration(script) or script.duration_sec
-        scenes = self.build_timeline(script, assets, total_duration=total_duration)
+        scenes = self.build_timeline(script, assets, total_duration=total_duration, plan=plan)
         background_music = self._find_background_music(assets)
 
         meta = self._load_project_meta()
+        global_grade = self._plan_color_grade(plan) or self.assign_color_grade(script.mood)
         orch = Orchestration(
             project_id=meta.get("project_id", "unknown"),
             title=script.title,
             topic=script.topic,
             total_duration_sec=total_duration,
-            color_grade=self.assign_color_grade(script.mood),
+            color_grade=global_grade,
             scenes=scenes,
             background_music=background_music,
             voiceover_tracks=voiceover_tracks,
@@ -133,7 +137,11 @@ class OrchestrationModule:
     # ------------------------------------------------------------------
 
     def build_timeline(
-        self, script: Script, assets: list[Asset], total_duration: float = 0.0
+        self,
+        script: Script,
+        assets: list[Asset],
+        total_duration: float = 0.0,
+        plan=None,  # Optional[ProductionPlan]
     ) -> list[Scene]:
         visual_assets = [
             a for a in assets
@@ -159,9 +167,14 @@ class OrchestrationModule:
                 )
                 asset = visual_assets[0]
 
-            grade = self.assign_color_grade(
-                Mood(segment.mood_tags[0]) if segment.mood_tags and _is_valid_mood(segment.mood_tags[0]) else script.mood
-            )
+            # Color grade: plan visual_style overrides mood-based selection
+            plan_grade = self._plan_color_grade(plan)
+            if plan_grade is not None:
+                grade = plan_grade
+            else:
+                grade = self.assign_color_grade(
+                    Mood(segment.mood_tags[0]) if segment.mood_tags and _is_valid_mood(segment.mood_tags[0]) else script.mood
+                )
 
             t_in = TransitionType.FADE_IN if idx == 0 else TransitionType.DISSOLVE
             t_out = TransitionType.DISSOLVE if idx < len(script.segments) - 1 else TransitionType.FADE_OUT
@@ -305,6 +318,31 @@ class OrchestrationModule:
             return []
         data = json.loads(p.read_text())
         return [Asset(**a) for a in data if a.get("quality_score", 0) >= min_quality]
+
+    def _load_production_plan(self):
+        """Load production_plan.json if present. Returns None otherwise."""
+        plan_path = self.project_dir / "production_plan.json"
+        if not plan_path.exists():
+            return None
+        try:
+            from src.utils.json_schemas import ProductionPlan
+            return ProductionPlan(**json.loads(plan_path.read_text()))
+        except Exception as e:
+            logger.warning("Could not load production_plan.json: %s", e)
+            return None
+
+    def _plan_color_grade(self, plan) -> Optional[ColorGrade]:
+        """Map production plan visual_style to a ColorGrade, or None if no plan."""
+        if plan is None:
+            return None
+        mapping = {
+            "dark_mysterious": ColorGrade.DARK_MYSTERIOUS,
+            "cinematic_warm": ColorGrade.CINEMATIC_WARM,
+            "documentary": ColorGrade.DOCUMENTARY,
+            "dramatic": ColorGrade.DRAMATIC,
+            "bright_modern": ColorGrade.UPLIFTING,
+        }
+        return mapping.get(plan.visual_style.value if hasattr(plan.visual_style, "value") else str(plan.visual_style))
 
     def _load_project_meta(self) -> dict:
         p = self.project_dir / "project.json"

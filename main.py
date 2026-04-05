@@ -4,6 +4,7 @@ ScriptToReel CLI — local script-to-video pipeline.
 Usage:
     python main.py --init --topic "Haunted Places in Pakistan" --duration 5
     python main.py --run --project haunted_places_in_pakistan
+    python main.py --run --no-plan --project haunted_places_in_pakistan
     python main.py --module 1 --project haunted_places_in_pakistan
     python main.py --status --project haunted_places_in_pakistan
     python main.py --validate --project haunted_places_in_pakistan
@@ -54,6 +55,12 @@ _MODULE_LABELS = {
     "module_6_validation": "Module 6 — Quality Validation",
 }
 
+# New module execution order when using production plan:
+# Script first → then asset search (using b_roll keywords) → metadata → orchestration → render → validate
+_PLAN_ORDER = [3, 1, 2, 4, 5, 6]
+# Legacy order (--no-plan): original 1→2→3→4→5→6
+_LEGACY_ORDER = [1, 2, 3, 4, 5, 6]
+
 
 @click.command()
 @click.option("--init", "action", flag_value="init", help="Create a new project")
@@ -64,9 +71,11 @@ _MODULE_LABELS = {
 @click.option("--topic", default=None, help="Video topic (for --init)")
 @click.option("--duration", default=5, type=float, show_default=True, help="Duration in minutes (for --init)")
 @click.option("--project", default=None, help="Project ID")
+@click.option("--no-plan", "no_plan", is_flag=True, default=False,
+              help="Skip production plan generation and use legacy module order (1→2→3→4→5→6)")
 @click.option("--projects-root", default=None, hidden=True, help="Override projects directory (for tests)")
 @click.option("--skip-director", is_flag=True, default=False, help="Skip AI Director review passes (faster runs)")
-def cli(action, module, topic, duration, project, projects_root, skip_director):
+def cli(action, module, topic, duration, project, no_plan, projects_root, skip_director):
     """ScriptToReel — topic to 1080p MP4 pipeline."""
     projects_path = Path(projects_root) if projects_root else (Path(__file__).parent / "projects")
 
@@ -81,23 +90,14 @@ def cli(action, module, topic, duration, project, projects_root, skip_director):
         console.print(f"   Topic      : {meta.topic}")
         console.print(f"   Duration   : {meta.duration_min} min ({meta.duration_sec:.0f}s)")
 
-        # Run AI Director to generate production_plan.json
-        project_dir = projects_path / meta.project_id
-        console.print("\n[bold cyan]Running AI Director...[/bold cyan]")
-        try:
-            from src.ai_director import AIDirector
-            director = AIDirector(project_dir)
-            plan = director.run(topic=meta.topic, duration_min=meta.duration_min)
-            console.print(f"   [green]✅ production_plan.json generated[/green]")
-            console.print(f"   Visual style : {plan.visual_style}")
-            console.print(f"   Tone         : {plan.tone}")
-            console.print(f"   Narrator     : {plan.narrator_voice}")
-            console.print(f"   Keywords     : {', '.join(plan.search_keywords[:4])}...")
-        except Exception as e:
-            console.print(f"   [yellow]⚠  AI Director failed (non-fatal): {e}[/yellow]")
-            console.print("   Continuing without production_plan.json — LLM will plan inline.")
-
-        console.print(f"\n   Next step  : python main.py --run --project {meta.project_id}\n")
+        if not no_plan:
+            # Generate production plan via AI Director
+            project_dir = projects_path / meta.project_id
+            _generate_production_plan(meta.topic, meta.duration_min, project_dir)
+            console.print(f"\n   [bold yellow]Next step:[/bold yellow] Edit [bold]projects/{meta.project_id}/production_plan.json[/bold] then run:")
+            console.print(f"   python main.py --run --project {meta.project_id}\n")
+        else:
+            console.print(f"\n   Next step  : python main.py --run --no-plan --project {meta.project_id}\n")
         return
 
     # --module N (standalone)
@@ -121,7 +121,17 @@ def cli(action, module, topic, duration, project, projects_root, skip_director):
 
     # --run (all modules)
     if action == "run":
-        for m in range(1, 7):
+        order = _LEGACY_ORDER if no_plan else _PLAN_ORDER
+        if not no_plan:
+            # Ensure production plan exists before running
+            project_dir = projects_path / project
+            try:
+                meta = load_project(project, projects_path)
+            except FileNotFoundError as e:
+                console.print(f"[red]Error:[/red] {e}")
+                sys.exit(1)
+            _ensure_production_plan(meta.topic, meta.duration_min, project_dir)
+        for m in order:
             _run_module(project, m, projects_path, skip_director=skip_director)
         return
 
@@ -132,6 +142,33 @@ def cli(action, module, topic, duration, project, projects_root, skip_director):
 
     console.print("[red]No action specified.[/red] Use --help for usage.")
     sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Production plan helpers
+# ---------------------------------------------------------------------------
+
+def _generate_production_plan(topic: str, duration_min: float, project_dir: Path) -> None:
+    """Generate production_plan.json via LLM. Prints status to console."""
+    console.print("\n   [cyan]Generating production plan...[/cyan]")
+    try:
+        from src.production_plan import ProductionPlanModule
+        pm = ProductionPlanModule(project_dir)
+        pm.generate(topic, duration_min)
+        console.print("   [green]✅ production_plan.json created[/green]")
+    except Exception as e:
+        console.print(f"   [yellow]⚠  Production plan generation failed: {e}[/yellow]")
+        console.print("   [dim]Continuing with topic-based defaults.[/dim]")
+
+
+def _ensure_production_plan(topic: str, duration_min: float, project_dir: Path) -> None:
+    """Generate production_plan.json if it doesn't exist yet."""
+    plan_path = project_dir / "production_plan.json"
+    if plan_path.exists():
+        console.print("[dim]   production_plan.json found — using existing plan[/dim]")
+        return
+    console.print("[cyan]   No production_plan.json found — generating now...[/cyan]")
+    _generate_production_plan(topic, duration_min, project_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +187,12 @@ def _print_status(project_id: str, projects_path: Path) -> None:
     console.print(f"  Topic      : {meta.topic}")
     console.print(f"  Duration   : {meta.duration_min} min")
     console.print(f"  Created    : {meta.created_at[:19].replace('T', ' ')} UTC")
+
+    # Show whether production plan exists
+    projects_path_obj = projects_path
+    plan_path = projects_path_obj / project_id / "production_plan.json"
+    plan_status = "[green]✅ exists[/green]" if plan_path.exists() else "[dim]not generated[/dim]"
+    console.print(f"  Plan       : {plan_status}")
 
     table = Table(box=box.ROUNDED, show_header=True, header_style="bold cyan")
     table.add_column("Module", style="bold")

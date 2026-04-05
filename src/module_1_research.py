@@ -107,20 +107,22 @@ class ResearchModule:
     # ------------------------------------------------------------------
 
     def _build_search_queries(self, topic: str) -> list[str]:
-        """Return 2-4 specific search queries derived from the topic.
+        """Return specific search queries derived from the topic.
 
         Priority order:
-        1. B-roll keywords from script.json (if Module 3 already ran — re-runs)
-        2. Key noun phrases extracted from the topic
-        3. The raw topic as fallback
+        1. image_search_queries from production_plan.json (most specific, LLM-generated)
+        2. B-roll keywords from script.json (if Module 3 already ran — new order or re-runs)
+        3. Key noun phrases extracted from the topic
+        4. The raw topic as fallback
         """
         queries: list[str] = []
 
-        # 1a. Pull AI Director search_keywords from production_plan.json (highest priority)
+        # 1. Load search_keywords and image_search_queries from production_plan.json if present
         plan_path = self.project_dir / "production_plan.json"
         if plan_path.exists():
             try:
                 plan_data = json.loads(plan_path.read_text())
+                # Pull AI Director search_keywords (highest priority)
                 plan_keywords = [
                     kw.strip() for kw in plan_data.get("search_keywords", [])
                     if kw.strip()
@@ -128,41 +130,53 @@ class ResearchModule:
                 if plan_keywords:
                     queries = plan_keywords[:4]
                     logger.info("Using %d AI Director keywords from production_plan.json", len(queries))
+                # Also pull image_search_queries if present
+                plan_queries = plan_data.get("image_search_queries", [])
+                for q in plan_queries:
+                    q = q.strip()
+                    if q and q not in queries:
+                        queries.append(q)
+                if plan_queries:
+                    logger.info(
+                        "Loaded %d image_search_queries from production_plan.json", len(plan_queries)
+                    )
             except Exception as e:
                 logger.warning("Could not read production_plan.json for keywords: %s", e)
 
-        # 1b. Pull B-roll keywords from existing script.json (re-runs)
-        if not queries:
-            script_path = self.project_dir / "script.json"
-            if script_path.exists():
-                try:
-                    script_data = json.loads(script_path.read_text())
-                    kw_set: dict[str, None] = {}  # ordered dedup
-                    for seg in script_data.get("segments", []):
-                        for kw in seg.get("b_roll_keywords", []):
-                            kw = kw.strip()
-                            if kw and kw.lower() not in ("technology", "science", "people",
-                                                           "nature", "business", "future",
-                                                           "innovation", "modern"):
-                                kw_set[kw] = None
-                    if kw_set:
-                        # Take up to 3 distinct keywords as separate queries
-                        queries = list(kw_set.keys())[:3]
-                        logger.info("Using %d B-roll keywords from script.json", len(queries))
-                except Exception as e:
-                    logger.warning("Could not read script.json for keywords: %s", e)
+        # 2. Pull B-roll keywords from existing script.json
+        # (populated when Module 3 runs before Module 1 in the new order)
+        script_path = self.project_dir / "script.json"
+        if script_path.exists():
+            try:
+                script_data = json.loads(script_path.read_text())
+                kw_set: dict[str, None] = {}  # ordered dedup
+                for seg in script_data.get("segments", []):
+                    for kw in seg.get("b_roll_keywords", []):
+                        kw = kw.strip()
+                        if kw and kw.lower() not in ("technology", "science", "people",
+                                                       "nature", "business", "future",
+                                                       "innovation", "modern"):
+                            kw_set[kw] = None
+                script_kws = [k for k in kw_set.keys() if k not in queries]
+                if script_kws:
+                    queries.extend(script_kws[:4])
+                    logger.info("Added %d B-roll keywords from script.json", len(script_kws[:4]))
+            except Exception as e:
+                logger.warning("Could not read script.json for keywords: %s", e)
 
-        # 2. Extract specific terms from the topic itself
+        # 3. Extract specific terms from the topic itself
         topic_queries = _topic_to_queries(topic)
         for q in topic_queries:
             if q not in queries:
                 queries.append(q)
 
-        # 3. Ensure the raw topic is always searched
+        # 4. Ensure the raw topic is always searched
         if topic not in queries:
             queries.insert(0, topic)
 
-        return queries[:4]  # cap at 4 to avoid excessive API calls
+        # Cap: 8 queries when plan exists (more specific), 4 otherwise
+        cap = 8 if plan_path.exists() else 4
+        return queries[:cap]
 
     # ------------------------------------------------------------------
     # Search helpers

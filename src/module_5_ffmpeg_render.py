@@ -419,9 +419,12 @@ class RenderModule:
             ], capture_output=True, check=True)
             return
 
+        # LUFS normalization filter (single-pass, applied per track before mixing)
+        _LUFS_FILTER = "loudnorm=I=-14:TP=-1.5:LRA=11"
+
         if len(inputs) == 1:
             # C6 — audio fade on background music when it's the only track
-            af = f"volume={volumes[0]:.4f}"
+            af = f"volume={volumes[0]:.4f},{_LUFS_FILTER}"
             if bg_input_idx == 0 and orch.background_music:
                 af += self._bg_music_afade(orch.background_music, total_duration)
             af += f",apad=whole_dur={total_duration}"
@@ -449,8 +452,9 @@ class RenderModule:
                 fade_filters = self._bg_music_afade(orch.background_music, total_duration)
             else:
                 fade_filters = ""
+            # Apply LUFS normalization per-track before mixing
             vol_parts.append(
-                f"[{i}:a]volume={vol:.4f}{fade_filters},apad=whole_dur={total_duration}[av{i}]"
+                f"[{i}:a]volume={vol:.4f},{_LUFS_FILTER}{fade_filters},apad=whole_dur={total_duration}[av{i}]"
             )
 
         mix_inputs = "".join(f"[{v}]" for v in vol_outs)

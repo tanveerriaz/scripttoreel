@@ -83,7 +83,10 @@ class ScriptModule:
 
         logger.info("Module 3: generating script for %r (%.0f min)", topic, duration_min)
 
-        script = self.generate_script_ollama(topic, duration_min)
+        # Load production plan settings if available
+        plan = self._load_production_plan()
+
+        script = self.generate_script_ollama(topic, duration_min, plan=plan)
 
         # Run ScriptDirector review unless explicitly skipped
         if not self.skip_director:
@@ -119,7 +122,12 @@ class ScriptModule:
     # Story 3.1 — Ollama script generation
     # ------------------------------------------------------------------
 
-    def generate_script_ollama(self, topic: str, duration_min: float) -> Script:
+    def generate_script_ollama(
+        self,
+        topic: str,
+        duration_min: float,
+        plan=None,  # Optional[ProductionPlan] — avoid circular import
+    ) -> Script:
         """Generate script via OpenRouter (if configured) or local Ollama."""
         prompts = load_ollama_prompts()
         system_prompt = prompts["script_generation"]["system"]
@@ -130,6 +138,24 @@ class ScriptModule:
             duration=duration_min,
             duration_sec=duration_sec,
         )
+
+        # Augment prompt with production plan settings
+        if plan is not None:
+            plan_hints: list[str] = []
+            if plan.tone:
+                plan_hints.append(f"Tone: {plan.tone}")
+            if plan.target_audience:
+                plan_hints.append(f"Target audience: {plan.target_audience}")
+            if plan.cultural_context:
+                plan_hints.append(f"Cultural context: {plan.cultural_context}")
+            if plan.avoid_list:
+                plan_hints.append(f"AVOID these topics/visuals: {', '.join(plan.avoid_list)}")
+            if plan.script_guidance:
+                plan_hints.append(f"Script guidance: {plan.script_guidance}")
+            if plan_hints:
+                user_prompt += "\n\nADDITIONAL PRODUCTION NOTES:\n" + "\n".join(
+                    f"- {h}" for h in plan_hints
+                )
 
         use_openrouter = self.api_keys.get("USE_OPENROUTER", "").lower() == "true"
         or_key = self.api_keys.get("OPENROUTER_API_KEY", "")
@@ -362,20 +388,32 @@ class ScriptModule:
         if result.returncode != 0:
             raise RuntimeError(f"piper failed: {result.stderr[:200]}")
 
-    def _macos_say_fallback(self, text: str, out_path: Path) -> None:
+    def _macos_say_fallback(
+        self,
+        text: str,
+        out_path: Path,
+        preferred_voice: Optional[str] = None,
+    ) -> None:
         """Use macOS built-in `say` to produce an AIFF then convert to WAV."""
         if not shutil.which("say"):
             raise RuntimeError("`say` command not found — not on macOS?")
 
-        # Daniel (en_GB) and Samantha are the clearest macOS voices.
+        # Use preferred_voice from production plan if provided and available,
+        # otherwise fall back to Daniel → Samantha.
         # Rate 175 wpm sounds natural for documentary-style narration.
         aiff = out_path.with_suffix(".aiff")
+        available_voices_result = subprocess.run(
+            ["say", "-v", "?"], capture_output=True, text=True
+        )
+        available = available_voices_result.stdout
+
         voice = "Samantha"
-        for candidate in ("Daniel", "Samantha"):
-            result = subprocess.run(
-                ["say", "-v", "?"], capture_output=True, text=True
-            )
-            if candidate in result.stdout:
+        candidates = []
+        if preferred_voice:
+            candidates.append(preferred_voice)
+        candidates.extend(("Daniel", "Samantha"))
+        for candidate in candidates:
+            if candidate in available:
                 voice = candidate
                 break
 
@@ -395,7 +433,9 @@ class ScriptModule:
         )
         aiff.unlink(missing_ok=True)
 
-    def generate_all_voiceovers(self, script: Script) -> Script:
+    def generate_all_voiceovers(
+        self, script: Script, narrator_voice: Optional[str] = None
+    ) -> Script:
         updated_segments = []
         for seg in script.segments:
             # Use per-segment voice if set; fall back to script narrator_voice
@@ -443,6 +483,18 @@ class ScriptModule:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _load_production_plan(self):
+        """Load production_plan.json if it exists. Returns None if not present."""
+        plan_path = self.project_dir / "production_plan.json"
+        if not plan_path.exists():
+            return None
+        try:
+            from src.utils.json_schemas import ProductionPlan
+            return ProductionPlan(**json.loads(plan_path.read_text()))
+        except Exception as e:
+            logger.warning("Could not load production_plan.json: %s", e)
+            return None
 
     def _load_project_meta(self) -> dict:
         p = self.project_dir / "project.json"
