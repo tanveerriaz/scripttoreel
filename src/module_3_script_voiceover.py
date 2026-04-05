@@ -3,12 +3,13 @@ Module 3 — Script Generation & Voiceover.
 
 1. Calls local Ollama to generate a structured script (JSON)
 2. Parses and validates the script with Pydantic
-3. Generates per-segment WAV voiceover (Coqui TTS → macOS `say` fallback)
+3. Generates per-segment WAV voiceover (edge-tts → piper → macOS `say`)
 4. Concatenates segments with pauses → voiceover.wav
 5. Writes script.json
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -20,6 +21,17 @@ from typing import Optional
 
 import requests
 from pydub import AudioSegment
+
+# Available edge-tts neural voices for casting
+AVAILABLE_VOICES = [
+    "en-US-GuyNeural",          # Deep, documentary narrator (default)
+    "en-US-ChristopherNeural",  # Authoritative male
+    "en-US-JennyNeural",        # Friendly female
+    "en-US-AriaNeural",         # Expressive female
+    "en-GB-RyanNeural",         # British male
+    "en-GB-SoniaNeural",        # British female
+]
+DEFAULT_NARRATOR_VOICE = "en-US-GuyNeural"
 
 from src.project_manager import update_pipeline_status
 from src.utils.config_loader import load_api_keys, load_ollama_prompts
@@ -206,8 +218,13 @@ class ScriptModule:
     # Path to piper model — falls back to macOS say if not found
     _PIPER_MODEL = Path(__file__).parent.parent / "models" / "piper" / "en_US-lessac-high.onnx"
 
-    def generate_voiceover_segment(self, text: str, segment_id: int) -> Path:
-        """Generate WAV for one segment. Tries piper → macOS say → silence."""
+    def generate_voiceover_segment(
+        self, text: str, segment_id: int, voice: Optional[str] = None
+    ) -> Path:
+        """Generate WAV for one segment.
+
+        Priority: edge-tts (neural) → piper → macOS say → silence.
+        """
         out = self._audio_dir / f"voiceover_{segment_id}.wav"
         if out.exists() and out.stat().st_size > 1000:
             return out
@@ -218,12 +235,48 @@ class ScriptModule:
             AudioSegment.silent(duration=500).export(str(out), format="wav")
             return out
 
+        selected_voice = voice or DEFAULT_NARRATOR_VOICE
+
+        # 1. edge-tts (primary — high-quality neural voices)
+        try:
+            self._edge_tts(text, out, selected_voice)
+            return out
+        except Exception as e:
+            logger.warning("edge-tts failed (segment %d): %s — trying piper", segment_id, e)
+
+        # 2. piper (fallback)
         try:
             self._piper_tts(text, out)
+            return out
         except Exception as e:
             logger.warning("Piper TTS failed (segment %d): %s — using macOS say", segment_id, e)
-            self._macos_say_fallback(text, out)
+
+        # 3. macOS say (last resort)
+        self._macos_say_fallback(text, out)
         return out
+
+    def _edge_tts(self, text: str, out_path: Path, voice: str = DEFAULT_NARRATOR_VOICE) -> None:
+        """Generate audio with Microsoft Edge TTS (neural voices via edge-tts package)."""
+        try:
+            import edge_tts  # noqa: PLC0415
+        except ImportError as exc:
+            raise RuntimeError("edge-tts not installed: pip install edge-tts") from exc
+
+        async def _synthesize() -> None:
+            communicate = edge_tts.Communicate(text, voice)
+            # edge-tts produces MP3; write to a temp file then convert to WAV
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+                tmp_path = Path(tmp.name)
+            try:
+                await communicate.save(str(tmp_path))
+                # Convert MP3 → WAV at 22050 Hz mono (consistent with piper output)
+                audio = AudioSegment.from_file(str(tmp_path), format="mp3")
+                audio = audio.set_frame_rate(22050).set_channels(1)
+                audio.export(str(out_path), format="wav")
+            finally:
+                tmp_path.unlink(missing_ok=True)
+
+        asyncio.run(_synthesize())
 
     def _piper_tts(self, text: str, out_path: Path) -> None:
         """Generate audio with piper-tts (high-quality neural TTS).
@@ -292,7 +345,9 @@ class ScriptModule:
     def generate_all_voiceovers(self, script: Script) -> Script:
         updated_segments = []
         for seg in script.segments:
-            wav = self.generate_voiceover_segment(seg.text, seg.id)
+            # Use per-segment voice if set; fall back to script narrator_voice
+            voice = seg.voice or script.narrator_voice or DEFAULT_NARRATOR_VOICE
+            wav = self.generate_voiceover_segment(seg.text, seg.id, voice=voice)
             dur = _wav_duration(wav)
             updated_segments.append(
                 seg.model_copy(update={"voiceover_path": str(wav), "voiceover_duration_sec": dur})

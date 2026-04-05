@@ -212,6 +212,9 @@ class ScriptSegment(BaseModel):
     transitions: SegmentTransitions = Field(default_factory=SegmentTransitions)
     text_overlay: TextOverlay = Field(default_factory=TextOverlay)
 
+    # Voice casting — edge-tts voice name (e.g. "en-US-GuyNeural")
+    voice: Optional[str] = None
+
     # Populated after voiceover generation
     voiceover_path: Optional[str] = None
     voiceover_duration_sec: Optional[float] = None
@@ -227,6 +230,10 @@ class Script(BaseModel):
     segments: list[ScriptSegment] = Field(default_factory=list)
     background_music_style: str = "ambient"
     overall_pacing: str = "medium"
+
+    # Voice casting
+    narrator_voice: str = "en-US-GuyNeural"
+    testimonial_voices: list[str] = Field(default_factory=list)
 
     # Populated after voiceover
     total_voiceover_path: Optional[str] = None
