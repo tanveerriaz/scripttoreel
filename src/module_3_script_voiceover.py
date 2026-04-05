@@ -88,6 +88,9 @@ class ScriptModule:
 
         script = self.generate_script_ollama(topic, duration_min, plan=plan)
 
+        # Enhance the opening hook
+        script = self._enhance_hook(script, plan)
+
         # Run ScriptDirector review unless explicitly skipped
         if not self.skip_director:
             script = self._run_script_director(script)
@@ -99,6 +102,56 @@ class ScriptModule:
         self.save_script(script)
         self._update_status(ModuleStatus.COMPLETE)
         return script
+
+    def _enhance_hook(self, script: Script, plan) -> Script:
+        """Replace or enhance the intro segment's opening with a generated hook.
+
+        If the intro already starts with a strong hook (ends with '?' or contains
+        a number), it is kept as-is. Otherwise the HookEngine selects the best
+        hook pattern for the topic/tone and prepends it to the intro text.
+        """
+        try:
+            intro_idx = next(
+                (i for i, s in enumerate(script.segments) if s.type.value == "intro"),
+                None,
+            )
+            if intro_idx is None:
+                return script
+
+            intro = script.segments[intro_idx]
+            first_sentence = (intro.text or "").split(".")[0].strip()
+
+            # Skip if already looks like a strong hook
+            if (
+                first_sentence.endswith("?")
+                or any(ch.isdigit() for ch in first_sentence[:60])
+            ):
+                logger.info("Module 3: intro already has a strong hook — skipping enhance")
+                return script
+
+            tone = getattr(plan, "tone", "educational") if plan else "educational"
+            audience = getattr(plan, "target_audience", "general") if plan else "general"
+
+            from src.hook_engine import HookEngine
+            engine = HookEngine(self.api_keys)
+            hook = engine.select_best_hook(script.topic, str(tone), str(audience), plan=plan)
+            hook_text = hook.get("text", "")
+
+            if not hook_text or hook_text in intro.text:
+                return script
+
+            new_text = hook_text + " " + intro.text
+            updated_segments = list(script.segments)
+            updated_segments[intro_idx] = intro.model_copy(update={"text": new_text})
+            logger.info(
+                "Module 3: enhanced hook (pattern=%s) prepended to intro segment",
+                hook.get("pattern", "?"),
+            )
+            return script.model_copy(update={"segments": updated_segments})
+
+        except Exception as e:
+            logger.warning("Hook enhancement failed: %s — using original intro", e)
+            return script
 
     def _run_script_director(self, draft: Script) -> Script:
         """Save script_draft.json, run ScriptDirector review, return revised script."""

@@ -362,6 +362,7 @@ class ProductionPlan(BaseModel):
     cultural_context: str = ""
     avoid_list: list[str] = Field(default_factory=list)
     script_guidance: str = ""
+    hook_style: Optional[str] = None  # One of 12 hook patterns, or None for auto-select
     generated_at: str = ""
 
 

@@ -145,6 +145,29 @@ visual_director:
     You are a visual director reviewing a video edit plan for color and transition coherence.
     (This prompt is reserved for future LLM-assisted visual review.)
 
+hook_engine:
+  system: |
+    You are a viral video hook writer specializing in documentary and educational content.
+    Generate compelling opening hooks that make viewers stop scrolling.
+    Return ONLY a JSON array — no markdown, no extra text, no trailing commas.
+    Pattern names: question, stat, controversy, story, authority, contrast, curiosity_gap,
+                   fomo, myth_buster, time_pressure, empathy, prediction
+
+  user_template: |
+    Topic: {topic}
+    Tone: {tone}
+    Audience: {audience}{pattern_constraint}
+
+    Generate 3 hooks that would make someone stop scrolling. Each hook must be 1-2 sentences,
+    punchy, and specific to the topic — never generic. Score each 1-10 for effectiveness.
+
+    Return JSON array only:
+    [
+      {{"pattern": "question", "text": "...", "score": 8.5}},
+      {{"pattern": "curiosity_gap", "text": "...", "score": 9.0}},
+      {{"pattern": "stat", "text": "...", "score": 7.2}}
+    ]
+
 quality_check:
   system: |
     You are a video quality analyst. Analyze this video metadata and provide feedback.

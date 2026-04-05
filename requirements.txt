@@ -27,6 +27,9 @@ rich>=13.7.0
 # Optional web dashboard (server.py)
 flask>=3.0.0
 
+# Video rendering
+moviepy>=2.0.0
+
 # TTS (edge-tts primary, Coqui fallback)
 edge-tts>=6.1.9
 TTS>=0.22.0

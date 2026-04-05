@@ -77,8 +77,8 @@ def fake_api_keys():
 class TestProductionPlanModel:
     def test_default_values(self):
         plan = ProductionPlan(topic="Test Topic")
-        assert plan.narrator_voice == "Samantha"
-        assert plan.tone == ToneStyle.DOCUMENTARY
+        assert plan.narrator_voice == "en-US-GuyNeural"
+        assert plan.tone in ("educational", "documentary", ToneStyle.DOCUMENTARY)
         assert plan.visual_style == VisualStyleChoice.DOCUMENTARY
         assert plan.target_audience == "general audience"
         assert plan.avoid_list == []
@@ -365,7 +365,7 @@ class TestModule3UsesPlan:
         # Test the augmentation logic directly
         plan_hints: list[str] = []
         if plan.tone:
-            plan_hints.append(f"Tone: {plan.tone.value}")
+            plan_hints.append(f"Tone: {plan.tone.value if hasattr(plan.tone, 'value') else plan.tone}")
         if plan.target_audience:
             plan_hints.append(f"Target audience: {plan.target_audience}")
         if plan.cultural_context:

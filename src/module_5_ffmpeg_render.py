@@ -1,15 +1,16 @@
 """
-Module 5 — FFmpeg Rendering.
+Module 5 — Video Rendering (MoviePy v2.0).
 
-Parses orchestration.json and produces a final 1080p H.264 MP4 using
-h264_videotoolbox (M4 Pro hardware encoder) with libx264 fallback.
+Parses orchestration.json and produces a final 1080p H.264 MP4.
 
 Pipeline:
-  1. Per-scene: image/video → scaled 1920x1080 clip with color grade,
-     Ken Burns motion (images), vignette, letterbox, fade in/out
-  2. Concat scene clips with dissolve transitions
-  3. Mix audio (voiceover + background music with fade in/out)
-  4. Final encode with VideoToolbox, BT.709, -movflags +faststart
+  1. Per-scene: build MoviePy clip from image/video asset
+       - Images  → Ken Burns motion (numpy crop on padded canvas)
+       - Videos  → Scale/pad/loop/trim to target duration
+       - Apply color grade, vignette, letterbox, fade in/out, text overlays
+  2. Concatenate scene clips with dissolve transitions (crossfadein/out)
+  3. Mix audio via ffmpeg subprocess (LUFS normalization, amix)
+  4. Attach mixed audio → write final MP4 via write_videofile()
 """
 from __future__ import annotations
 
@@ -22,14 +23,14 @@ import textwrap
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
+
 from src.project_manager import update_pipeline_status
 from src.utils.config_loader import load_ffmpeg_presets
 from src.utils.ffmpeg_builder import (
     FFmpegCommand,
     build_audio_amix_filter,
     build_color_grade_filter,
-    build_concat_filter,
-    build_drawtext_filter,
     build_scale_pad_filter,
     build_xfade_filter,
 )
@@ -52,6 +53,8 @@ _VIGNETTE_GRADES = {ColorGrade.DARK_MYSTERIOUS, ColorGrade.DRAMATIC}
 # Grades that get 2.39:1 letterbox bars
 _LETTERBOX_GRADES = {ColorGrade.DARK_MYSTERIOUS, ColorGrade.DRAMATIC}
 
+_TRANSITION_DUR = 0.5  # seconds for crossfade between scenes
+
 
 class RenderModule:
     def __init__(self, project_dir: Path):
@@ -60,8 +63,6 @@ class RenderModule:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self._presets = load_ffmpeg_presets()
         self._hw_encoder = self._detect_encoder()
-        self._has_drawtext = self._detect_drawtext()
-        self._has_drawbox = self._detect_drawbox()
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -69,86 +70,440 @@ class RenderModule:
 
     def run(self) -> str:
         orch = self._load_orchestration()
-        logger.info("Module 5: rendering %d scenes, total %.1fs", len(orch.scenes), orch.total_duration_sec)
+        logger.info(
+            "Module 5: rendering %d scenes, total %.1fs",
+            len(orch.scenes), orch.total_duration_sec,
+        )
 
         with tempfile.TemporaryDirectory(prefix="vf_render_") as tmpdir:
             tmp = Path(tmpdir)
-            scenes = orch.scenes
-            n_scenes = len(scenes)
+            final_out = self.output_dir / "final_video.mp4"
 
-            # Step 1: render each scene to a clip
-            scene_clips = []
-            for idx, scene in enumerate(scenes):
-                clip = tmp / f"scene_{scene.id:03d}.mp4"
-                self._render_scene(
-                    scene, clip, tmp,
-                    is_first=(idx == 0),
-                    is_last=(idx == n_scenes - 1),
-                )
-                scene_clips.append(str(clip))
-
-            # Step 2: concat scene clips (with xfade transitions where applicable)
-            concat_video = tmp / "concat.mp4"
-            if not scene_clips:
-                # No visual assets — render a solid black placeholder for the full duration
+            # Step 1 + 2: build and concatenate scene clips
+            video_only = tmp / "video_only.mp4"
+            if orch.scenes:
+                clips = self._build_all_scene_clips(orch, tmp)
+                self._write_concat(clips, str(video_only), orch.total_duration_sec)
+            else:
                 logger.warning(
-                    "No scenes available — rendering black placeholder for %.1fs",
+                    "No scenes — rendering black placeholder for %.1fs",
                     orch.total_duration_sec,
                 )
-                self._render_placeholder(orch.total_duration_sec, concat_video)
-            else:
-                self.concat_clips(scene_clips, str(concat_video), scenes=orch.scenes)
+                self._render_placeholder(orch.total_duration_sec, video_only)
 
-            # Step 3: mix audio
+            # Step 3: mix audio via ffmpeg (LUFS, amix)
             audio_out = tmp / "mixed_audio.aac"
             self._mix_audio(orch, audio_out, total_duration=orch.total_duration_sec)
 
-            # Step 4: final encode
-            final_out = self.output_dir / "final_video.mp4"
-            self._final_encode(str(concat_video), str(audio_out), str(final_out))
+            # Step 4: final encode — mux video + audio
+            self._final_encode(str(video_only), str(audio_out), str(final_out))
 
         self._update_status(ModuleStatus.COMPLETE, output_file=str(final_out))
         logger.info("Render complete: %s", final_out)
         return str(final_out)
 
     # ------------------------------------------------------------------
-    # Story 5.2 — Per-scene rendering
+    # Scene clip building (MoviePy)
     # ------------------------------------------------------------------
 
-    def _render_scene(
+    def _build_all_scene_clips(self, orch: Orchestration, tmp: Path) -> list:
+        """Build a MoviePy clip for every scene and return the list."""
+        from moviepy import VideoFileClip, ImageClip, ColorClip, CompositeVideoClip, vfx
+
+        n = len(orch.scenes)
+        clips = []
+        for idx, scene in enumerate(orch.scenes):
+            clip = self._build_scene_clip(
+                scene, tmp,
+                is_first=(idx == 0),
+                is_last=(idx == n - 1),
+            )
+            clips.append(clip)
+        return clips
+
+    def _build_scene_clip(
         self,
         scene: Scene,
-        out: Path,
-        tmp_dir: Path,
+        tmp: Path,
         is_first: bool = False,
         is_last: bool = False,
-    ) -> None:
+    ):
+        """Return a fully-processed MoviePy clip for one scene."""
+        from moviepy import ColorClip
+
         asset_path = Path(scene.asset_path)
+        duration = scene.duration_sec
+
         if not asset_path.exists():
-            logger.warning("Asset not found: %s — using color placeholder", asset_path)
-            self._render_placeholder(scene.duration_sec, out)
-            return
+            logger.warning("Asset not found: %s — black placeholder", asset_path)
+            return ColorClip(size=(_W, _H), color=(0, 0, 0)).with_duration(duration).with_fps(_FPS)
 
         suffix = asset_path.suffix.lower()
-        overlays = scene.text_overlays
-        if suffix in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
-            self.render_image_to_clip(
-                str(asset_path), str(out), scene.duration_sec, scene.color_grade,
-                overlays,
-                scene_id=scene.id,
-                is_first=is_first,
-                is_last=is_last,
-                tmp_dir=tmp_dir,
-            )
+        if suffix in (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"):
+            clip = self._image_to_clip(str(asset_path), duration, scene.id)
         else:
-            self.render_video_clip(
-                str(asset_path), str(out), scene.duration_sec, scene.color_grade,
-                overlays,
-                scene_id=scene.id,
-                is_first=is_first,
-                is_last=is_last,
-                tmp_dir=tmp_dir,
+            clip = self._video_to_clip(str(asset_path), duration)
+
+        # Apply color grade (brightness/contrast/saturation/gamma)
+        clip = self._apply_color_grade(clip, scene.color_grade)
+
+        # Vignette for dark/dramatic grades
+        if scene.color_grade in _VIGNETTE_GRADES:
+            clip = self._apply_vignette(clip)
+
+        # Letterbox bars (2.39:1) for dark/dramatic grades
+        if scene.color_grade in _LETTERBOX_GRADES:
+            clip = self._apply_letterbox(clip)
+
+        # Fade in on first scene, fade out on last
+        clip = self._apply_fades(clip, duration, is_first, is_last)
+
+        # Text overlays (Pillow PNG composited)
+        clip = self._apply_text_overlays(clip, scene.text_overlays, duration, tmp, scene.id)
+
+        return clip
+
+    # ------------------------------------------------------------------
+    # Image → clip with Ken Burns effect
+    # ------------------------------------------------------------------
+
+    # Padded canvas: 15% larger than output for smooth zoom/pan headroom
+    _KB_W = 2208   # 1920 * 1.15 (even)
+    _KB_H = 1242   # 1080 * 1.15 (even)
+
+    def _image_to_clip(self, image_path: str, duration: float, scene_id: int = 1):
+        """Convert a still image to a video clip with Ken Burns motion."""
+        from moviepy import VideoClip
+        from PIL import Image as PILImage
+
+        style = (scene_id - 1) % 4
+        kw, kh = self._KB_W, self._KB_H
+        n_frames = max(2, int(duration * _FPS))
+        denom = max(1, n_frames - 1)
+
+        # Load and pad to canvas size once (outside make_frame closure)
+        try:
+            img = PILImage.open(image_path).convert("RGB")
+            # Fit into KB canvas preserving aspect ratio
+            img.thumbnail((kw, kh), PILImage.LANCZOS)
+            canvas = PILImage.new("RGB", (kw, kh), (0, 0, 0))
+            ox = (kw - img.width) // 2
+            oy = (kh - img.height) // 2
+            canvas.paste(img, (ox, oy))
+            canvas_arr = np.array(canvas, dtype=np.uint8)
+        except Exception as e:
+            logger.warning("Image load failed (%s): %s — black frame", image_path, e)
+            return self._black_clip(duration)
+
+        pan_cy = (kh - _H) // 2
+
+        def make_frame(t: float) -> np.ndarray:
+            progress = min(t / duration, 1.0) if duration > 0 else 0.0
+
+            if style == 0:  # zoom in
+                cw = int(kw + (_W - kw) * progress)
+                ch = int(kh + (_H - kh) * progress)
+                cx = (kw - cw) // 2
+                cy = (kh - ch) // 2
+            elif style == 1:  # zoom out
+                cw = int(_W + (kw - _W) * progress)
+                ch = int(_H + (kh - _H) * progress)
+                cx = (kw - cw) // 2
+                cy = (kh - ch) // 2
+            elif style == 2:  # pan right
+                max_x = kw - _W
+                cx = int(max_x * progress)
+                cy = pan_cy
+                cw, ch = _W, _H
+            else:  # pan left
+                max_x = kw - _W
+                cx = int(max_x * (1.0 - progress))
+                cy = pan_cy
+                cw, ch = _W, _H
+
+            # Clamp
+            cx = max(0, min(cx, kw - max(cw, 1)))
+            cy = max(0, min(cy, kh - max(ch, 1)))
+            cw = max(1, min(cw, kw - cx))
+            ch = max(1, min(ch, kh - cy))
+
+            cropped = canvas_arr[cy:cy + ch, cx:cx + cw]
+            # Resize to output dimensions
+            pil_crop = PILImage.fromarray(cropped).resize((_W, _H), PILImage.BICUBIC)
+            return np.array(pil_crop, dtype=np.uint8)
+
+        from moviepy import VideoClip
+        return VideoClip(make_frame, duration=duration).with_fps(_FPS)
+
+    # ------------------------------------------------------------------
+    # Video → clip (scale/pad/loop/trim)
+    # ------------------------------------------------------------------
+
+    def _video_to_clip(self, video_path: str, duration: float):
+        """Load a video, loop if too short, trim to duration, resize to 1920x1080."""
+        from moviepy import VideoFileClip, ColorClip, concatenate_videoclips
+
+        try:
+            raw = VideoFileClip(video_path)
+        except Exception as e:
+            logger.warning("VideoFileClip failed (%s): %s — black frame", video_path, e)
+            return self._black_clip(duration)
+
+        # Loop if shorter than needed
+        if raw.duration < duration:
+            reps = int(duration / raw.duration) + 1
+            raw = concatenate_videoclips([raw] * reps)
+
+        # Trim to target duration
+        clip = raw.subclipped(0, duration)
+
+        # Resize to fill 1920x1080 (letterbox/pillarbox with black bars)
+        clip_w, clip_h = clip.size
+        scale = min(_W / clip_w, _H / clip_h)
+        new_w = int(clip_w * scale)
+        new_h = int(clip_h * scale)
+
+        resized = clip.resized((new_w, new_h))
+
+        # Composite onto black 1920x1080 background
+        if new_w != _W or new_h != _H:
+            from moviepy import CompositeVideoClip
+            bg = ColorClip(size=(_W, _H), color=(0, 0, 0)).with_duration(duration)
+            ox = (_W - new_w) // 2
+            oy = (_H - new_h) // 2
+            resized = resized.with_position((ox, oy))
+            clip = CompositeVideoClip([bg, resized])
+        else:
+            clip = resized
+
+        return clip.with_fps(_FPS)
+
+    # ------------------------------------------------------------------
+    # Color grade (numpy image_transform)
+    # ------------------------------------------------------------------
+
+    def _apply_color_grade(self, clip, color_grade: ColorGrade):
+        """Apply eq-style color grading via numpy image_transform."""
+        grade = self._grade_params(color_grade)
+        brightness = float(grade.get("brightness", 0.0))
+        contrast = float(grade.get("contrast", 1.0))
+        saturation = float(grade.get("saturation", 1.0))
+        gamma = float(grade.get("gamma", 1.0))
+
+        # Skip if all defaults
+        if brightness == 0.0 and contrast == 1.0 and saturation == 1.0 and gamma == 1.0:
+            return clip
+
+        def grade_frame(frame: np.ndarray) -> np.ndarray:
+            img = frame.astype(np.float32) / 255.0
+            # Gamma
+            if gamma != 1.0:
+                img = np.power(np.clip(img, 0, 1), 1.0 / gamma)
+            # Contrast
+            if contrast != 1.0:
+                img = (img - 0.5) * contrast + 0.5
+            # Brightness
+            if brightness != 0.0:
+                img = img + brightness
+            # Saturation
+            if saturation != 1.0:
+                gray = 0.299 * img[..., 0] + 0.587 * img[..., 1] + 0.114 * img[..., 2]
+                gray = gray[..., np.newaxis]
+                img = gray + (img - gray) * saturation
+            return (np.clip(img, 0, 1) * 255).astype(np.uint8)
+
+        return clip.image_transform(grade_frame)
+
+    # ------------------------------------------------------------------
+    # Vignette (radial darkening mask)
+    # ------------------------------------------------------------------
+
+    def _apply_vignette(self, clip):
+        """Apply a radial darkening vignette via numpy image_transform."""
+        # Pre-compute vignette mask at output size (applied to every frame)
+        cy, cx = _H / 2, _W / 2
+        y = np.linspace(0, _H - 1, _H)
+        x = np.linspace(0, _W - 1, _W)
+        X, Y = np.meshgrid(x, y)
+        dist = np.sqrt(((X - cx) / cx) ** 2 + ((Y - cy) / cy) ** 2)
+        # Falloff: 1.0 at center, ~0.5 at corners
+        mask = np.clip(1.0 - 0.5 * dist ** 1.5, 0.0, 1.0).astype(np.float32)
+        mask_rgb = mask[:, :, np.newaxis]  # (H, W, 1) — broadcasts over RGB channels
+
+        def vignette_frame(frame: np.ndarray) -> np.ndarray:
+            return (frame.astype(np.float32) * mask_rgb).clip(0, 255).astype(np.uint8)
+
+        return clip.image_transform(vignette_frame)
+
+    # ------------------------------------------------------------------
+    # Letterbox (2.39:1 black bars)
+    # ------------------------------------------------------------------
+
+    def _apply_letterbox(self, clip):
+        """Add 2.39:1 widescreen letterbox (140px black bars top/bottom)."""
+        bar_h = 140
+
+        def letterbox_frame(frame: np.ndarray) -> np.ndarray:
+            out = frame.copy()
+            out[:bar_h, :] = 0
+            out[-bar_h:, :] = 0
+            return out
+
+        return clip.image_transform(letterbox_frame)
+
+    # ------------------------------------------------------------------
+    # Fades
+    # ------------------------------------------------------------------
+
+    def _apply_fades(self, clip, duration: float, is_first: bool, is_last: bool):
+        from moviepy import vfx
+        effects = []
+        if is_first:
+            effects.append(vfx.FadeIn(0.4))
+        if is_last:
+            effects.append(vfx.FadeOut(0.5))
+        if effects:
+            clip = clip.with_effects(effects)
+        return clip
+
+    # ------------------------------------------------------------------
+    # Text overlays (Pillow PNG + composite)
+    # ------------------------------------------------------------------
+
+    def _apply_text_overlays(
+        self,
+        clip,
+        overlays: list[TextOverlay] | None,
+        duration: float,
+        tmp: Path,
+        scene_id: int,
+    ):
+        """Composite Pillow-rendered text PNGs onto the clip."""
+        enabled = [o for o in (overlays or []) if o.enabled and o.text.strip()]
+        if not enabled:
+            return clip
+
+        from moviepy import ImageClip, CompositeVideoClip
+
+        layers = [clip]
+        for i, overlay in enumerate(enabled):
+            png_path = str(tmp / f"overlay_{scene_id}_{i}.png")
+            try:
+                self._render_overlay_png(overlay, png_path)
+            except Exception as e:
+                logger.warning("Overlay PNG render failed: %s", e)
+                continue
+
+            start = getattr(overlay, "start_time", 0.0) or 0.0
+            end = getattr(overlay, "end_time", None) or duration
+
+            ov_clip = (
+                ImageClip(png_path)
+                .with_duration(end - start)
+                .with_start(start)
             )
+            layers.append(ov_clip)
+
+        if len(layers) == 1:
+            return clip
+
+        return CompositeVideoClip(layers, size=(_W, _H))
+
+    # ------------------------------------------------------------------
+    # Concatenation (MoviePy)
+    # ------------------------------------------------------------------
+
+    def _write_concat(self, clips: list, out_path: str, total_duration: float) -> None:
+        """Concatenate scene clips with dissolve transitions and write to file."""
+        from moviepy import concatenate_videoclips
+
+        if not clips:
+            self._render_placeholder(total_duration, Path(out_path))
+            return
+
+        if len(clips) == 1:
+            clips[0].write_videofile(
+                out_path,
+                fps=_FPS,
+                codec=self._hw_encoder,
+                audio=False,
+                ffmpeg_params=self._video_ffmpeg_params(),
+                logger=None,
+            )
+            clips[0].close()
+            return
+
+        # Apply crossfade transitions between consecutive clips
+        transitioned = []
+        for i, clip in enumerate(clips):
+            if i == 0:
+                transitioned.append(clip)
+            else:
+                # Each subsequent clip starts _TRANSITION_DUR earlier
+                # and fades in over the transition window
+                fade_dur = min(_TRANSITION_DUR, clips[i - 1].duration / 2, clip.duration / 2)
+                from moviepy import vfx
+                clip_faded = clip.with_effects([vfx.CrossFadeIn(fade_dur)])
+                clip_faded = clip_faded.with_start(
+                    sum(c.duration for c in clips[:i]) - fade_dur * i
+                )
+                transitioned.append(clip_faded)
+
+        try:
+            final = concatenate_videoclips(transitioned, method="compose")
+            final.write_videofile(
+                out_path,
+                fps=_FPS,
+                codec=self._hw_encoder,
+                audio=False,
+                ffmpeg_params=self._video_ffmpeg_params(),
+                logger=None,
+            )
+        finally:
+            for c in clips:
+                try:
+                    c.close()
+                except Exception:
+                    pass
+
+    # Public method kept for test compatibility
+    def concat_clips(
+        self,
+        clip_paths: list[str],
+        out_path: str,
+        scenes: list[Scene] | None = None,
+    ) -> None:
+        """Concatenate pre-rendered clip files (test-facing API)."""
+        from moviepy import VideoFileClip, concatenate_videoclips
+
+        if not clip_paths:
+            raise ValueError("concat_clips called with empty clip list")
+
+        if len(clip_paths) == 1:
+            shutil.copy(clip_paths[0], out_path)
+            return
+
+        loaded = [VideoFileClip(p) for p in clip_paths]
+        try:
+            final = concatenate_videoclips(loaded, method="compose")
+            final.write_videofile(
+                out_path,
+                fps=_FPS,
+                codec=self._hw_encoder,
+                audio=False,
+                ffmpeg_params=self._video_ffmpeg_params(),
+                logger=None,
+            )
+        finally:
+            for c in loaded:
+                try:
+                    c.close()
+                except Exception:
+                    pass
+
+    # ------------------------------------------------------------------
+    # Public per-clip methods (test-facing API)
+    # ------------------------------------------------------------------
 
     def render_image_to_clip(
         self,
@@ -162,43 +517,26 @@ class RenderModule:
         is_last: bool = False,
         tmp_dir: Path | None = None,
     ) -> None:
-        """Convert a still image to a video clip with Ken Burns motion + grade."""
-        grade = self._grade_params(color_grade)
-        n = max(2, int(duration_sec * _FPS))
-
-        # C1 — Ken Burns (scale+pad+crop — fast, no zoompan buffering)
-        kb = self._ken_burns_filter(scene_id, n)
-
-        # C2 — Vignette
-        vignette = ",vignette=PI/4" if grade.get("vignette") else ""
-
-        # C5 — Fade in / out
-        fade = self._fade_filter(duration_sec, is_first, is_last)
-
-        # C4 — Letterbox bars (2.39:1 widescreen)
-        letterbox = self._letterbox_filter(color_grade) if self._has_drawbox else ""
-
-        # kb already includes the full scale→pad→crop→scale→fps chain
-        filter_chain = (
-            f"[0:v]{kb},"
-            f"eq=brightness={grade['brightness']:.3f}:contrast={grade['contrast']:.3f}:"
-            f"saturation={grade['saturation']:.3f}:gamma={grade['gamma']:.3f}"
-            f"{vignette}"
-            f"{fade}"
-            f"{letterbox}"
-            f"[grade]"
+        """Convert a still image to a video clip. Writes file to out_path."""
+        tmp = tmp_dir or Path(tempfile.mkdtemp(prefix="vf_img_"))
+        clip = self._image_to_clip(image_path, duration_sec, scene_id)
+        clip = self._apply_color_grade(clip, color_grade)
+        if color_grade in _VIGNETTE_GRADES:
+            clip = self._apply_vignette(clip)
+        if color_grade in _LETTERBOX_GRADES:
+            clip = self._apply_letterbox(clip)
+        clip = self._apply_fades(clip, duration_sec, is_first, is_last)
+        if text_overlays:
+            clip = self._apply_text_overlays(clip, text_overlays, duration_sec, tmp, scene_id)
+        clip.write_videofile(
+            out_path,
+            fps=_FPS,
+            codec=self._hw_encoder,
+            audio=False,
+            ffmpeg_params=self._video_ffmpeg_params(),
+            logger=None,
         )
-
-        # C3 — Text overlays via Pillow PNG + overlay filter
-        extra_inputs, overlay_frag = self._build_pillow_overlays(
-            text_overlays, duration_sec, tmp_dir, input_offset=1
-        )
-        filter_chain += overlay_frag
-
-        cmd = self._build_scene_cmd(image_path, out_path, filter_chain, duration_sec, extra_inputs)
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"FFmpeg image→clip error:\n{result.stderr[-400:]}")
+        clip.close()
 
     def render_video_clip(
         self,
@@ -212,168 +550,51 @@ class RenderModule:
         is_last: bool = False,
         tmp_dir: Path | None = None,
     ) -> None:
-        """Scale and color-grade a video clip to 1920x1080 with polish effects."""
-        grade = self._grade_params(color_grade)
-
-        # C2 — Vignette
-        vignette = ",vignette=PI/4" if grade.get("vignette") else ""
-
-        # C5 — Fade in / out
-        fade = self._fade_filter(duration_sec, is_first, is_last)
-
-        # C4 — Letterbox
-        letterbox = self._letterbox_filter(color_grade) if self._has_drawbox else ""
-
-        filter_chain = (
-            f"[0:v]scale={_W}:{_H}:force_original_aspect_ratio=decrease,"
-            f"pad={_W}:{_H}:(ow-iw)/2:(oh-ih)/2:black,"
-            f"eq=brightness={grade['brightness']:.3f}:contrast={grade['contrast']:.3f}:"
-            f"saturation={grade['saturation']:.3f}:gamma={grade['gamma']:.3f}"
-            f"{vignette}"
-            f"{fade}"
-            f"{letterbox}"
-            f"[grade]"
+        """Scale and color-grade a video clip to 1920x1080. Writes file to out_path."""
+        tmp = tmp_dir or Path(tempfile.mkdtemp(prefix="vf_vid_"))
+        clip = self._video_to_clip(video_path, duration_sec)
+        clip = self._apply_color_grade(clip, color_grade)
+        if color_grade in _VIGNETTE_GRADES:
+            clip = self._apply_vignette(clip)
+        if color_grade in _LETTERBOX_GRADES:
+            clip = self._apply_letterbox(clip)
+        clip = self._apply_fades(clip, duration_sec, is_first, is_last)
+        if text_overlays:
+            clip = self._apply_text_overlays(clip, text_overlays, duration_sec, tmp, scene_id)
+        clip.write_videofile(
+            out_path,
+            fps=_FPS,
+            codec=self._hw_encoder,
+            audio=False,
+            ffmpeg_params=self._video_ffmpeg_params(),
+            logger=None,
         )
+        clip.close()
 
-        # C3 — Text overlays
-        extra_inputs, overlay_frag = self._build_pillow_overlays(
-            text_overlays, duration_sec, tmp_dir, input_offset=1
-        )
-        filter_chain += overlay_frag
-
-        cmd = self._build_scene_cmd(video_path, out_path, filter_chain, duration_sec, extra_inputs)
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"FFmpeg video clip error:\n{result.stderr[-400:]}")
+    # ------------------------------------------------------------------
+    # Placeholder (black screen)
+    # ------------------------------------------------------------------
 
     def _render_placeholder(self, duration_sec: float, out: Path) -> None:
-        cmd = (
-            FFmpegCommand()
-            .input(
-                f"color=c=black:size={_W}x{_H}:duration={duration_sec}:rate={_FPS}",
-                f="lavfi",
-            )
-            .output(str(out), **self._video_encode_opts())
+        """Render a black 1920x1080 clip for the given duration."""
+        from moviepy import ColorClip
+        clip = ColorClip(size=(_W, _H), color=(0, 0, 0)).with_duration(duration_sec)
+        clip.write_videofile(
+            str(out),
+            fps=_FPS,
+            codec=self._hw_encoder,
+            audio=False,
+            ffmpeg_params=self._video_ffmpeg_params(),
+            logger=None,
         )
-        self._run(cmd)
+        clip.close()
+
+    def _black_clip(self, duration: float):
+        from moviepy import ColorClip
+        return ColorClip(size=(_W, _H), color=(0, 0, 0)).with_duration(duration).with_fps(_FPS)
 
     # ------------------------------------------------------------------
-    # Story 5.3 — Concat
-    # ------------------------------------------------------------------
-
-    def concat_clips(
-        self,
-        clip_paths: list[str],
-        out_path: str,
-        scenes: list[Scene] | None = None,
-    ) -> None:
-        """Concatenate scene clips.
-
-        When scenes are provided and consecutive scenes have dissolve/crossfade
-        transitions, xfade filters are applied. Falls back to concat demuxer
-        (hard cuts, no re-encode) when transitions are not needed.
-        """
-        if not clip_paths:
-            raise ValueError("concat_clips called with empty clip list")
-        if len(clip_paths) == 1:
-            shutil.copy(clip_paths[0], out_path)
-            return
-
-        # Determine if any scene requires a smooth transition
-        use_xfade = False
-        if scenes and len(scenes) == len(clip_paths):
-            xfade_types = {TransitionType.DISSOLVE, TransitionType.CROSSFADE}
-            use_xfade = any(
-                s.transition_in in xfade_types or s.transition_out in xfade_types
-                for s in scenes[1:]  # first scene has no "previous" to transition from
-            )
-
-        if use_xfade and scenes:
-            self._concat_with_xfade(clip_paths, out_path, scenes)
-            return
-
-        # Default: fast concat demuxer (c=copy, no re-encode)
-        import tempfile as _tf
-        with _tf.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as fh:
-            list_path = fh.name
-            for p in clip_paths:
-                fh.write(f"file '{p}'\n")
-
-        cmd = (
-            FFmpegCommand()
-            .input(list_path, f="concat", safe="0")
-            .output(out_path, c="copy")
-        )
-        self._run(cmd)
-        Path(list_path).unlink(missing_ok=True)
-
-    def _concat_with_xfade(
-        self,
-        clip_paths: list[str],
-        out_path: str,
-        scenes: list[Scene],
-    ) -> None:
-        """Concatenate clips using xfade filter for smooth transitions."""
-        xfade_types = {TransitionType.DISSOLVE, TransitionType.CROSSFADE}
-        transition_dur = 0.5  # seconds per transition
-
-        cmd = ["ffmpeg", "-y"]
-        for path in clip_paths:
-            cmd += ["-i", path]
-
-        # Build filter: setpts normalisation then chain xfade between pairs
-        parts: list[str] = []
-        for i in range(len(clip_paths)):
-            parts.append(f"[{i}:v]setpts=PTS-STARTPTS[v{i}]")
-
-        current = "v0"
-        offset = 0.0
-        for i, scene in enumerate(scenes[1:], start=1):
-            prev_dur = scenes[i - 1].duration_sec
-            offset += prev_dur - transition_dur
-            offset = max(offset, 0.0)
-
-            do_xfade = (
-                scene.transition_in in xfade_types
-                or scenes[i - 1].transition_out in xfade_types
-            )
-            out_stream = f"xf{i}" if i < len(scenes) - 1 else "vout"
-
-            if do_xfade:
-                parts.append(
-                    f"[{current}][v{i}]xfade=transition=dissolve:"
-                    f"duration={transition_dur:.3f}:offset={offset:.3f}[{out_stream}]"
-                )
-            else:
-                parts.append(f"[{current}][v{i}]concat=n=2:v=1:a=0[{out_stream}]")
-                offset += scenes[i].duration_sec - transition_dur
-
-            current = out_stream
-
-        filter_complex = "; ".join(parts)
-        cmd += [
-            "-filter_complex", filter_complex,
-            "-map", "[vout]",
-            "-c:v", self._hw_encoder,
-            "-pix_fmt", "yuv420p",
-            "-r", str(_FPS),
-        ]
-        if self._hw_encoder == "h264_videotoolbox":
-            cmd += ["-b:v", "5000k"]
-        else:
-            cmd += ["-crf", "22", "-preset", "fast"]
-        cmd.append(out_path)
-
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            logger.warning(
-                "xfade concat failed (falling back to hard cuts).\nFFmpeg stderr:\n%s",
-                result.stderr[-600:],
-            )
-            self.concat_clips(clip_paths, out_path, scenes=None)
-
-    # ------------------------------------------------------------------
-    # Story 5.4 — Audio mixing
+    # Audio mixing (ffmpeg subprocess — LUFS normalization)
     # ------------------------------------------------------------------
 
     def _mix_audio(
@@ -384,7 +605,6 @@ class RenderModule:
     ) -> None:
         inputs: list[str] = []
         volumes: list[float] = []
-        # Track which input index is background music for fade application
         bg_input_idx: int | None = None
 
         if orch.voiceover_tracks:
@@ -399,31 +619,26 @@ class RenderModule:
             inputs.append(orch.background_music.local_path)
             volumes.append(orch.background_music.volume)
 
-        # Collect SFX tracks from all scenes
         for scene in orch.scenes:
             for sfx in scene.sfx_tracks:
                 p = Path(sfx.local_path)
                 if p.exists():
                     inputs.append(sfx.local_path)
                     volumes.append(sfx.volume)
-                else:
-                    logger.debug("SFX track not found, skipping: %s", sfx.local_path)
 
         if not inputs:
-            # Generate silence
             subprocess.run([
                 "ffmpeg", "-y",
-                "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=stereo:duration={total_duration}",
+                "-f", "lavfi",
+                "-i", f"anullsrc=r=44100:cl=stereo:duration={total_duration}",
                 "-c:a", "aac", "-b:a", "192k",
                 str(out_path),
             ], capture_output=True, check=True)
             return
 
-        # LUFS normalization filter (single-pass, applied per track before mixing)
         _LUFS_FILTER = "loudnorm=I=-14:TP=-1.5:LRA=11"
 
         if len(inputs) == 1:
-            # C6 — audio fade on background music when it's the only track
             af = f"volume={volumes[0]:.4f},{_LUFS_FILTER}"
             if bg_input_idx == 0 and orch.background_music:
                 af += self._bg_music_afade(orch.background_music, total_duration)
@@ -438,7 +653,6 @@ class RenderModule:
             ], capture_output=True, check=True)
             return
 
-        # Multiple inputs — build input list + amix
         cmd = ["ffmpeg", "-y"]
         for inp in inputs:
             cmd += ["-i", inp]
@@ -447,14 +661,13 @@ class RenderModule:
         vol_outs = []
         for i, vol in enumerate(volumes):
             vol_outs.append(f"av{i}")
-            # C6 — audio fade on background music
             if i == bg_input_idx and orch.background_music:
                 fade_filters = self._bg_music_afade(orch.background_music, total_duration)
             else:
                 fade_filters = ""
-            # Apply LUFS normalization per-track before mixing
             vol_parts.append(
-                f"[{i}:a]volume={vol:.4f},{_LUFS_FILTER}{fade_filters},apad=whole_dur={total_duration}[av{i}]"
+                f"[{i}:a]volume={vol:.4f},{_LUFS_FILTER}{fade_filters},"
+                f"apad=whole_dur={total_duration}[av{i}]"
             )
 
         mix_inputs = "".join(f"[{v}]" for v in vol_outs)
@@ -481,7 +694,6 @@ class RenderModule:
 
     @staticmethod
     def _bg_music_afade(track, total_duration: float) -> str:
-        """Return afade filter string for background music fade in/out."""
         parts = []
         fade_in = getattr(track, "fade_in", 0.0) or 0.0
         fade_out = getattr(track, "fade_out", 0.0) or 0.0
@@ -493,190 +705,28 @@ class RenderModule:
         return "," + ",".join(parts) if parts else ""
 
     # ------------------------------------------------------------------
-    # Story 5.5 — Final encode
+    # Final encode — mux video + audio
     # ------------------------------------------------------------------
 
     def _final_encode(self, video_path: str, audio_path: str, out_path: str) -> None:
         default = self._presets["output"]["default"]
-
         cmd = [
             "ffmpeg", "-y",
             "-i", video_path,
             "-i", audio_path,
             "-map", "0:v:0", "-map", "1:a:0",
-            "-c:v", self._hw_encoder,
-        ]
-
-        if self._hw_encoder == "h264_videotoolbox":
-            cmd += ["-b:v", default["bitrate"]]
-        else:
-            cmd += ["-crf", "22", "-preset", "fast"]
-
-        cmd += [
+            "-c:v", "copy",   # video already encoded — just remux
             "-c:a", "aac", "-b:a", default["audio_bitrate"],
-            "-pix_fmt", default["pixel_format"],
-            "-color_primaries", default["color_primaries"],
-            "-color_trc", default["color_trc"],
-            "-colorspace", default["colorspace"],
             "-movflags", "+faststart",
-            "-threads", str(default["threads"]),
             out_path,
         ]
-
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            raise RuntimeError(f"Final encode failed:\n{result.stderr[-500:]}")
+            raise RuntimeError(f"Final mux failed:\n{result.stderr[-500:]}")
 
     # ------------------------------------------------------------------
-    # C1 — Ken Burns motion helpers
+    # Text overlay helpers (Pillow)
     # ------------------------------------------------------------------
-
-    # Padded canvas: 15% larger than output gives smooth zoom/pan headroom
-    _KB_W = 2208   # 1920 * 1.15  (even)
-    _KB_H = 1242   # 1080 * 1.15  (even)
-
-    def _ken_burns_filter(self, scene_id: int, n_frames: int) -> str:
-        """Return a filter chain fragment for Ken Burns motion on still images.
-
-        Uses scale+pad+crop (fast, no look-ahead buffering like zoompan).
-        Returns the full chain from raw input to 1920x1080 output at _FPS,
-        ready to be prefixed with '[0:v]' and followed by ',eq=...'.
-
-        4 styles cycle by scene_id:
-          0 — zoom in toward center
-          1 — zoom out from center
-          2 — pan right
-          3 — pan left
-        """
-        style = (scene_id - 1) % 4
-        denom = max(1, n_frames - 1)
-        kw, kh = self._KB_W, self._KB_H
-        pan_cy = (kh - _H) // 2  # vertical center offset for pan styles
-
-        # loop=n_frames bounds the filter pipeline so it terminates cleanly;
-        # without this, -stream_loop -1 creates an infinite stream that -t
-        # may not reliably cut inside a filter_complex graph.
-        loop_fps = f"loop={n_frames}:size=1:start=0,fps={_FPS}"
-
-        # Scale source to padded canvas (handles any aspect ratio, letterboxed)
-        scale_pad = (
-            f"{loop_fps},"
-            f"scale={kw}:{kh}:force_original_aspect_ratio=decrease,"
-            f"pad={kw}:{kh}:(ow-iw)/2:(oh-ih)/2:black"
-        )
-
-        if style == 0:  # zoom in — crop window shrinks from canvas to output size
-            cw = f"{kw}+({_W}-{kw})*n/{denom}"
-            ch = f"{kh}+({_H}-{kh})*n/{denom}"
-            return (
-                f"{scale_pad},"
-                f"crop=w='{cw}':h='{ch}':x='({kw}-out_w)/2':y='({kh}-out_h)/2',"
-                f"scale={_W}:{_H}:flags=bicubic"
-            )
-
-        elif style == 1:  # zoom out — crop window expands from output to canvas size
-            cw = f"{_W}+({kw}-{_W})*n/{denom}"
-            ch = f"{_H}+({kh}-{_H})*n/{denom}"
-            return (
-                f"{scale_pad},"
-                f"crop=w='{cw}':h='{ch}':x='({kw}-out_w)/2':y='({kh}-out_h)/2',"
-                f"scale={_W}:{_H}:flags=bicubic"
-            )
-
-        elif style == 2:  # pan right — fixed 1920x1080 crop, x moves right→left
-            max_x = kw - _W   # = 288
-            cx = f"{max_x}*n/{denom}"
-            return (
-                f"{scale_pad},"
-                f"crop=w={_W}:h={_H}:x='{cx}':y={pan_cy}"
-            )
-
-        else:  # pan left — fixed 1920x1080 crop, x moves left→right
-            max_x = kw - _W
-            cx = f"{max_x}*(1-n/{denom})"
-            return (
-                f"{scale_pad},"
-                f"crop=w={_W}:h={_H}:x='{cx}':y={pan_cy}"
-            )
-
-    # ------------------------------------------------------------------
-    # C2 / C4 / C5 — filter helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _fade_filter(duration_sec: float, is_first: bool, is_last: bool) -> str:
-        """Return comma-prefixed fade filter(s) or empty string."""
-        parts = []
-        if is_first:
-            parts.append("fade=t=in:st=0:d=0.4")
-        if is_last:
-            st = max(0.0, duration_sec - 0.5)
-            parts.append(f"fade=t=out:st={st:.3f}:d=0.5")
-        return "," + ",".join(parts) if parts else ""
-
-    def _letterbox_filter(self, color_grade: ColorGrade) -> str:
-        """Return comma-prefixed drawbox letterbox or empty string."""
-        if color_grade not in _LETTERBOX_GRADES:
-            return ""
-        return (
-            ",drawbox=x=0:y=0:w=iw:h=140:c=black:t=fill"
-            ",drawbox=x=0:y=ih-140:w=iw:h=140:c=black:t=fill"
-        )
-
-    # ------------------------------------------------------------------
-    # C3 — Pillow-based text overlay
-    # ------------------------------------------------------------------
-
-    def _build_pillow_overlays(
-        self,
-        overlays: list[TextOverlay] | None,
-        duration_sec: float,
-        tmp_dir: Path | None,
-        input_offset: int = 1,
-    ) -> tuple[list[str], str]:
-        """Return (extra_input_paths, filter_fragment) for text overlays.
-
-        Falls back to null (pass-through) if Pillow unavailable, no tmp_dir,
-        or no enabled overlays.
-        """
-        enabled = [o for o in (overlays or []) if o.enabled and o.text.strip()]
-        if not enabled or tmp_dir is None:
-            return [], "; [grade]null[v]"
-
-        try:
-            from PIL import Image  # noqa: F401
-        except ImportError:
-            logger.warning("Pillow not installed — skipping text overlays")
-            return [], "; [grade]null[v]"
-
-        extra_inputs: list[str] = []
-        parts: list[str] = []
-        current = "grade"
-
-        for i, overlay in enumerate(enabled):
-            png_path = str(tmp_dir / f"overlay_{i}.png")
-            try:
-                self._render_overlay_png(overlay, png_path)
-            except Exception as e:
-                logger.warning("Failed to render overlay PNG: %s — skipping", e)
-                continue
-
-            extra_inputs.append(png_path)
-            idx = input_offset + len(extra_inputs) - 1
-
-            start = getattr(overlay, "start_time", 0.0) or 0.0
-            end = getattr(overlay, "end_time", None) or duration_sec
-
-            out_stream = "v" if i == len(enabled) - 1 else f"ov{i}"
-            parts.append(
-                f"[{current}][{idx}:v]overlay=0:0:enable='between(t,{start:.3f},{end:.3f})'[{out_stream}]"
-            )
-            current = out_stream
-
-        if not parts:
-            return [], "; [grade]null[v]"
-
-        return extra_inputs, "; " + "; ".join(parts)
 
     def _render_overlay_png(self, overlay: TextOverlay, out_path: str) -> None:
         """Render a TextOverlay to a transparent 1920x1080 RGBA PNG via Pillow."""
@@ -687,8 +737,7 @@ class RenderModule:
 
         size, use_box, _ = self._overlay_style(overlay.style)
 
-        # Find a usable TTF font
-        font: ImageFont.FreeTypeFont | ImageFont.ImageFont | None = None
+        font = None
         for candidate in [
             "/Library/Fonts/Arial.ttf",
             "/System/Library/Fonts/Supplemental/Arial.ttf",
@@ -705,15 +754,12 @@ class RenderModule:
         if font is None:
             font = ImageFont.load_default()
 
-        # Wrap long text
         lines = textwrap.wrap(overlay.text, width=50) or [overlay.text]
         line_height = size + 8
 
-        # Measure total block
         max_w = max(draw.textlength(ln, font=font) for ln in lines)
         total_h = len(lines) * line_height
 
-        # Compute position
         x = int((_W - max_w) / 2)
         if overlay.position == "bottom_third":
             y = int(_H * 2 / 3)
@@ -726,7 +772,6 @@ class RenderModule:
         else:
             y = _H - total_h - 80
 
-        # Background box
         if use_box:
             pad = 18
             box_layer = Image.new("RGBA", (_W, _H), (0, 0, 0, 0))
@@ -738,7 +783,6 @@ class RenderModule:
             img = Image.alpha_composite(img, box_layer)
             draw = ImageDraw.Draw(img)
 
-        # Draw each line
         for j, line in enumerate(lines):
             lw = draw.textlength(line, font=font)
             lx = int((_W - lw) / 2)
@@ -750,57 +794,6 @@ class RenderModule:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _build_scene_cmd(
-        self,
-        input_path: str,
-        out_path: str,
-        filter_chain: str,
-        duration_sec: float,
-        extra_inputs: list[str] | None = None,
-    ) -> list[str]:
-        """Build a subprocess argv for a per-scene encode."""
-        cmd = [
-            "ffmpeg", "-y",
-            "-stream_loop", "-1",   # loop main input to fill duration
-            "-i", input_path,
-        ]
-        # Extra inputs (e.g. overlay PNGs) — no stream_loop
-        for ei in (extra_inputs or []):
-            cmd += ["-i", ei]
-        cmd += [
-            "-filter_complex", filter_chain,
-            "-map", "[v]",
-            "-t", str(duration_sec),
-            "-c:v", self._hw_encoder,
-            "-pix_fmt", "yuv420p",
-            "-r", str(_FPS),
-        ]
-        if self._hw_encoder == "h264_videotoolbox":
-            cmd += ["-b:v", "3000k"]
-        else:
-            cmd += ["-crf", "22", "-preset", "fast"]
-        cmd.append(out_path)
-        return cmd
-
-    # Keep for backward compat (tests that call directly)
-    def _build_overlay_chain(self, overlays: list[TextOverlay] | None) -> str:
-        """Legacy helper — returns null pass-through chain."""
-        return "; [grade]null[v]"
-
-    @staticmethod
-    def _find_system_font() -> str:
-        candidates = [
-            "/Library/Fonts/Arial.ttf",
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
-            "/System/Library/Fonts/Helvetica.ttc",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        ]
-        for p in candidates:
-            if Path(p).exists():
-                return p
-        return ""
-
     @staticmethod
     def _overlay_style(style: str) -> tuple[int, bool, str]:
         styles = {
@@ -810,50 +803,13 @@ class RenderModule:
         }
         return styles.get(style, (42, True, "black@0.6"))
 
-    @staticmethod
-    def _overlay_xy(position: str) -> tuple[str, str]:
-        positions = {
-            "bottom_third": ("(w-text_w)/2", "h*2/3"),
-            "center":       ("(w-text_w)/2", "(h-text_h)/2"),
-            "top":          ("(w-text_w)/2", "50"),
-            "bottom":       ("(w-text_w)/2", "h-text_h-50"),
-        }
-        return positions.get(position, ("(w-text_w)/2", "h-text_h-80"))
-
-    def _detect_encoder(self) -> str:
-        result = subprocess.run(["ffmpeg", "-encoders"], capture_output=True, text=True)
-        if "h264_videotoolbox" in result.stdout:
-            logger.info("Using h264_videotoolbox (M4 Pro hardware)")
-            return "h264_videotoolbox"
-        logger.info("Falling back to libx264")
-        return "libx264"
-
-    def _detect_drawtext(self) -> bool:
-        result = subprocess.run(["ffmpeg", "-filters"], capture_output=True, text=True)
-        available = "drawtext" in result.stdout
-        if not available:
-            logger.info("FFmpeg drawtext unavailable — using Pillow for text overlays")
-        return available
-
-    def _detect_drawbox(self) -> bool:
-        result = subprocess.run(["ffmpeg", "-filters"], capture_output=True, text=True)
-        available = "drawbox" in result.stdout
-        if not available:
-            logger.info("FFmpeg drawbox unavailable — letterbox disabled")
-        return available
-
-    def _video_encode_opts(self) -> dict:
-        opts: dict = {
-            "c_v": self._hw_encoder,
-            "pix_fmt": "yuv420p",
-            "r": str(_FPS),
-        }
+    def _video_ffmpeg_params(self) -> list[str]:
+        params = ["-pix_fmt", "yuv420p"]
         if self._hw_encoder == "h264_videotoolbox":
-            opts["b_v"] = "3000k"
+            params += ["-b:v", "5000k"]
         else:
-            opts["crf"] = "22"
-            opts["preset"] = "fast"
-        return opts
+            params += ["-crf", "22", "-preset", "fast"]
+        return params
 
     def _grade_params(self, grade: ColorGrade) -> dict:
         defaults = {"brightness": 0.0, "contrast": 1.0, "saturation": 1.0, "gamma": 1.0}
@@ -864,10 +820,13 @@ class RenderModule:
             pass
         return defaults
 
-    def _run(self, cmd: FFmpegCommand) -> None:
-        result = cmd.run()
-        if result.returncode != 0:
-            raise RuntimeError(f"FFmpeg error:\n{result.stderr[-400:]}")
+    def _detect_encoder(self) -> str:
+        result = subprocess.run(["ffmpeg", "-encoders"], capture_output=True, text=True)
+        if "h264_videotoolbox" in result.stdout:
+            logger.info("Using h264_videotoolbox (Apple Silicon hardware)")
+            return "h264_videotoolbox"
+        logger.info("Falling back to libx264")
+        return "libx264"
 
     def _load_orchestration(self) -> Orchestration:
         p = self.project_dir / "orchestration.json"

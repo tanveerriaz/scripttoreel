@@ -199,6 +199,9 @@ class OrchestrationModule:
             scenes.append(scene)
             cursor += scene_dur
 
+        # Post-processing: dedup + temperature smoothing + coherence scoring
+        scenes, asset_map = self._post_process_timeline(scenes, script.segments, visual_assets)
+
         return scenes
 
     def _voiceover_duration(self, script: Script) -> float:
@@ -296,6 +299,95 @@ class OrchestrationModule:
         )
 
     # ------------------------------------------------------------------
+    # Story 4.5 — Visual coherence scoring
+    # ------------------------------------------------------------------
+
+    def _post_process_timeline(
+        self,
+        scenes: list[Scene],
+        segments,
+        visual_assets: list,
+    ) -> tuple[list[Scene], dict[int, object]]:
+        """Dedup consecutive same-asset scenes and penalise temperature jumps.
+
+        Returns (updated_scenes, asset_by_scene_id) where asset_by_scene_id maps
+        scene.id → Asset for downstream logging.
+        """
+        # Build scene_id → Asset lookup
+        asset_by_id: dict[str, object] = {a.id: a for a in visual_assets}
+        asset_by_scene: dict[int, object] = {}
+        for scene in scenes:
+            asset_by_scene[scene.id] = asset_by_id.get(scene.asset_id)
+
+        # --- Dedup: same asset in consecutive scenes → swap to next-best ---
+        for i in range(1, len(scenes)):
+            if scenes[i].asset_id == scenes[i - 1].asset_id and len(scenes) > i:
+                seg = segments[i] if i < len(segments) else segments[-1]
+                # Exclude already-used asset
+                candidates = [a for a in visual_assets if a.id != scenes[i].asset_id]
+                if candidates:
+                    best = max(candidates, key=lambda a: self._score_asset(a, seg))
+                    scenes[i] = scenes[i].model_copy(update={
+                        "asset_id": best.id,
+                        "asset_path": best.local_path or "",
+                    })
+                    asset_by_scene[scenes[i].id] = best
+                    logger.info(
+                        "Dedup: scene %d swapped from %s → %s",
+                        scenes[i].id, scenes[i - 1].asset_id, best.id,
+                    )
+
+        # --- Temperature smoothing: penalise delta > 2.0 ---
+        for i in range(1, len(scenes)):
+            asset_a = asset_by_scene.get(scenes[i - 1].id)
+            asset_b = asset_by_scene.get(scenes[i].id)
+            if asset_a is None or asset_b is None:
+                continue
+            temp_a = _compute_color_temperature(getattr(asset_a, "color_palette", []))
+            temp_b = _compute_color_temperature(getattr(asset_b, "color_palette", []))
+            if abs(temp_a - temp_b) > 2.0:
+                seg = segments[i] if i < len(segments) else segments[-1]
+                # Try to find an asset whose temperature is closer to temp_a
+                candidates = [
+                    a for a in visual_assets if a.id != scenes[i - 1].asset_id
+                ]
+                if candidates:
+                    best = min(
+                        candidates,
+                        key=lambda a: abs(
+                            _compute_color_temperature(getattr(a, "color_palette", [])) - temp_a
+                        ),
+                    )
+                    best_temp = _compute_color_temperature(getattr(best, "color_palette", []))
+                    if abs(best_temp - temp_a) < abs(temp_b - temp_a):
+                        scenes[i] = scenes[i].model_copy(update={
+                            "asset_id": best.id,
+                            "asset_path": best.local_path or "",
+                        })
+                        asset_by_scene[scenes[i].id] = best
+                        logger.info(
+                            "Temperature smooth: scene %d temp %.1f→%.1f (delta was %.1f)",
+                            scenes[i].id, temp_b, best_temp, abs(temp_a - temp_b),
+                        )
+
+        # --- Coherence scoring ---
+        score = 10.0
+        for i in range(1, len(scenes)):
+            if scenes[i].asset_id == scenes[i - 1].asset_id:
+                score -= 2.0
+            asset_a = asset_by_scene.get(scenes[i - 1].id)
+            asset_b = asset_by_scene.get(scenes[i].id)
+            if asset_a and asset_b:
+                temp_a = _compute_color_temperature(getattr(asset_a, "color_palette", []))
+                temp_b = _compute_color_temperature(getattr(asset_b, "color_palette", []))
+                if abs(temp_a - temp_b) > 2.0:
+                    score -= 1.0
+        score = max(0.0, min(10.0, score))
+        logger.info("Visual coherence score: %.1f/10", score)
+
+        return scenes, asset_by_scene
+
+    # ------------------------------------------------------------------
     # Persistence & helpers
     # ------------------------------------------------------------------
 
@@ -372,3 +464,29 @@ def _is_valid_mood(value: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _compute_color_temperature(hex_colors: list[str]) -> float:
+    """Compute warmth score (0=cool, 10=warm) from a list of hex color strings.
+
+    Warmth = average of per-color (R - B + 255) / 510 * 10.
+    Returns 5.0 (neutral) for empty input.
+    """
+    if not hex_colors:
+        return 5.0
+
+    scores = []
+    for hex_color in hex_colors:
+        try:
+            h = hex_color.lstrip("#")
+            if len(h) < 6:
+                continue
+            r = int(h[0:2], 16)
+            g = int(h[2:4], 16)
+            b = int(h[4:6], 16)
+            warmth = (r - b + 255) / 510 * 10
+            scores.append(warmth)
+        except (ValueError, IndexError):
+            continue
+
+    return round(sum(scores) / len(scores), 2) if scores else 5.0
