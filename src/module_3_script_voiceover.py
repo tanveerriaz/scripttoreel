@@ -294,19 +294,24 @@ class ScriptModule:
 
         # 1. edge-tts (primary — high-quality neural voices)
         try:
+            logger.info("Segment %d: Using edge-tts (%s)", segment_id, selected_voice)
             self._edge_tts(text, out, selected_voice)
+            logger.info("Segment %d: edge-tts succeeded", segment_id)
             return out
         except Exception as e:
             logger.warning("edge-tts failed (segment %d): %s — trying piper", segment_id, e)
 
         # 2. piper (fallback)
         try:
+            logger.info("Segment %d: Using piper TTS", segment_id)
             self._piper_tts(text, out)
+            logger.info("Segment %d: piper succeeded", segment_id)
             return out
         except Exception as e:
             logger.warning("Piper TTS failed (segment %d): %s — using macOS say", segment_id, e)
 
         # 3. macOS say (last resort)
+        logger.info("Segment %d: Using macOS say (fallback)", segment_id)
         self._macos_say_fallback(text, out)
         return out
 
@@ -321,6 +326,8 @@ class ScriptModule:
             communicate = edge_tts.Communicate(text, voice)
             mp3_path = out_path.with_suffix(".mp3")
             await communicate.save(str(mp3_path))
+            if not mp3_path.exists() or mp3_path.stat().st_size < 100:
+                raise RuntimeError(f"edge-tts produced no output at {mp3_path}")
             # Convert MP3 → WAV (22050 Hz mono, matching piper output)
             subprocess.run(
                 [
