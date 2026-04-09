@@ -96,12 +96,11 @@ def test_generate_hooks_uses_llm_response():
         {"pattern": "curiosity_gap", "text": "There's a hidden truth about AI.", "score": 7.5},
     ]
     engine = HookEngine(api_keys={
-        "USE_OPENROUTER": "true",
         "OPENROUTER_API_KEY": "fake-key",
         "OPENROUTER_MODEL": "test/model",
     })
 
-    with patch("requests.post", return_value=_make_mock_response(llm_hooks)):
+    with patch("src.hook_engine.call_llm", return_value=json.dumps(llm_hooks)):
         hooks = engine.generate_hooks("Artificial Intelligence", "educational", "developers")
 
     assert len(hooks) == 3

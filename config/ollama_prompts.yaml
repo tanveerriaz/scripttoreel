@@ -33,6 +33,7 @@ script_generation:
           "visual_cues": ["specific visual description 1", "specific visual description 2"],
           "mood_tags": ["dramatic"],
           "b_roll_keywords": ["SPECIFIC keyword 1 for {topic}", "SPECIFIC keyword 2", "SPECIFIC keyword 3"],
+          "sdxl_prompt": "Photorealistic scene description for AI image generation — describe subject, environment, lighting, mood. Example: 'developer at desk with glowing code on monitor, dark room, blue ambient light, wide shot'",
           "sfx_cues": ["relevant ambient sound"],
           "music_cues": ["ambient"],
           "transitions": {{"in": "fade_in", "out": "dissolve"}},
@@ -55,10 +56,16 @@ script_generation:
     - background_music_style: exactly one of: ambient, dramatic, uplifting, suspenseful
     - overall_pacing: exactly one of: slow, medium, fast
     - Total duration of ALL segments combined must equal exactly {duration_sec} seconds
+    - WORD COUNT: Total narration across ALL segment "text" fields must be {target_words} words or fewer. At 2.5 words/sec that is {duration_sec}s. Count carefully and cut ruthlessly — every extra word pushes past the time budget.
     - Create 4-6 segments: start with "intro", end with "outro", no empty text fields
     - First segment "intro" MUST have text_overlay enabled with a relevant title
     - Every segment MUST have non-empty text narration
     - b_roll_keywords: 4-6 per segment, ALL must be specific to the topic "{topic}"
+    - sdxl_prompt: ONE per segment — a rich, camera-ready description for AI image generation.
+      Describe what a camera would see: subject + environment + lighting + mood + composition.
+      BAD: "technology visualization" or "AI concept"
+      GOOD: "rows of glowing GPU servers in dark data centre, blue LED reflections on floor, wide angle, cinematic"
+      GOOD: "scientist examining holographic brain scan, sterile lab, cool fluorescent lighting, medium shot"
 
     GENRE TONE RULES — detect genre from the topic and apply to every segment:
     - thriller / action / spy / heist / chase: SHORT PUNCHY sentences (8-12 words max). Build tension sentence-by-sentence. Cinematic visceral language. Imply, never state. Set overall_pacing="fast", background_music_style="suspenseful".
@@ -103,11 +110,18 @@ ai_director:
       "tone": "educational",
       "mood": "educational",
       "color_palette": ["#1a1a2e", "#16213e", "#0f3460"],
-      "narrator_voice": "en-US-GuyNeural",
+      "narrator_voice": "en-US-AriaNeural",
       "search_keywords": ["specific keyword 1 for {topic}", "specific keyword 2", "specific keyword 3", "specific keyword 4", "specific keyword 5", "specific keyword 6"],
+      "sdxl_visual_prompts": [
+        "RICH visual scene description 1 — describe exactly what should appear on screen, as if briefing a cinematographer. Include subject, environment, lighting, mood. No abstract concepts — only what a camera would see.",
+        "RICH visual scene description 2",
+        "RICH visual scene description 3",
+        "RICH visual scene description 4",
+        "RICH visual scene description 5"
+      ],
       "scene_breakdown": ["Scene 1: brief description", "Scene 2: brief description", "Scene 3: brief description"],
       "background_music_keywords": ["ambient electronic", "cinematic tension"],
-      "sfx_keywords": ["keyboard typing", "server hum"],
+      "sfx_keywords": ["keyword1", "keyword2"],
       "text_overlay_style": "lower_third"
     }}
 
@@ -115,8 +129,15 @@ ai_director:
     - mood: exactly one of: dark, mysterious, uplifting, dramatic, educational, horror, neutral, suspenseful, melancholic
     - visual_style: exactly one of: documentary, cinematic, minimalist
     - tone: exactly one of: educational, dramatic, uplifting, suspenseful
-    - narrator_voice: choose based on tone — "en-US-GuyNeural" (professional male) or "en-US-AriaNeural" (professional female) or "en-GB-SoniaNeural" (British female)
+    - narrator_voice: choose based on tone — "en-US-AriaNeural" (expressive female, default) or "en-US-JennyNeural" (friendly female) or "en-US-GuyNeural" (professional male) or "en-GB-SoniaNeural" (British female)
     - search_keywords: 6-10 SPECIFIC stock footage keywords for "{topic}" — no generic terms
+    - sdxl_visual_prompts: CRITICAL — 5-7 richly described visual scenes for AI image generation.
+      Each prompt must be a concrete camera-ready description of what appears on screen.
+      BAD: "technology", "vibe coding concept", "AI innovation"
+      GOOD for "What is Vibe Coding": "developer leaning back relaxed at desk with dark IDE on monitor, code autocompleting line by line, soft blue screen glow, cosy home office at night"
+      GOOD for "What is Vibe Coding": "split screen showing human typing natural language prompt on left, AI generated code appearing on right, dark background neon accents"
+      GOOD for "Rise of AI": "rows of GPU servers in dark data centre, blue LED lights, heat haze rising, wide angle"
+      Always describe: subject + environment + lighting + mood. Never use topic name as the prompt.
     - scene_breakdown: 3-5 scene descriptions that guide visual storytelling
     - text_overlay_style: exactly one of: lower_third, minimal, bold, subtitle
 

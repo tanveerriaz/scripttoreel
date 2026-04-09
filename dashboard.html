@@ -354,6 +354,18 @@
   .pill-green { background: #14532d; color: #86efac; }
   .pill-gray  { background: #1e293b; color: var(--muted); }
 
+  .del-btn {
+    background: none;
+    border: 1px solid #3f1f1f;
+    border-radius: 6px;
+    color: #f87171;
+    cursor: pointer;
+    font-size: 0.78rem;
+    padding: 4px 10px;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .del-btn:hover { border-color: var(--red); background: #3f1f1f; }
+
   .link-btn {
     background: none;
     border: 1px solid var(--border);
@@ -395,7 +407,7 @@
     </div>
     <div class="brand-text">
       <h1>ScriptToReel</h1>
-      <p>Turn a topic into a 1080p MP4 — OpenRouter or Ollama · FFmpeg · stock APIs · TTS</p>
+      <p>Turn a topic into a 1080p MP4 — OpenRouter or Ollama · MoviePy v2.0 · FFmpeg · stock APIs · edge-tts</p>
     </div>
   </div>
 </header>
@@ -481,7 +493,7 @@ const MODULE_LABELS = [
   "Metadata Extraction",
   "Script & Voiceover",
   "Scene Orchestration",
-  "FFmpeg Rendering",
+  "MoviePy Rendering",
   "Quality Validation",
 ];
 
@@ -491,7 +503,7 @@ const MODULE_DESCS = [
   "Extracting ffprobe / Pillow / librosa metadata",
   "Generating script (LLM) + voiceover (TTS)",
   "Matching assets to scenes, planning timeline",
-  "Rendering H.264 1080p with VideoToolbox",
+  "MoviePy v2.0 scenes · Ken Burns · color grade · CrossFadeIn",
   "Running 10 quality checks, embedding metadata",
 ];
 
@@ -704,12 +716,13 @@ async function loadProjects() {
       ? `<a href="/api/video/${p.id}" download="${p.id}.mp4" class="link-btn">⬇ Download</a>`
       : `<span style="color:var(--muted);font-size:0.78rem;">—</span>`;
     return `
-      <tr>
+      <tr id="row-${p.id}">
         <td>${p.topic}</td>
         <td>${p.duration_min} min</td>
         <td>${date}</td>
         <td>${badge}</td>
         <td>${dlBtn}</td>
+        <td><button class="del-btn" onclick="deleteProject('${p.id}')">🗑 Delete</button></td>
       </tr>`;
   }).join("");
 
@@ -722,10 +735,42 @@ async function loadProjects() {
           <th>Created</th>
           <th>Status</th>
           <th>Download</th>
+          <th></th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>`;
+}
+
+// ── Delete Project ──
+
+async function deleteProject(projectId) {
+  if (!confirm(`Delete project "${projectId}" and all its files?\n\nThis cannot be undone.`)) return;
+
+  // Immediately grey out the row for instant feedback
+  const row = document.getElementById(`row-${projectId}`);
+  if (row) row.style.opacity = "0.4";
+
+  try {
+    const res = await fetch(`/api/projects/${projectId}`, { method: "DELETE" });
+    if (res.ok) {
+      // Fade row out then reload table
+      if (row) {
+        row.style.transition = "opacity 0.3s";
+        row.style.opacity = "0";
+        setTimeout(loadProjects, 320);
+      } else {
+        loadProjects();
+      }
+    } else {
+      const body = await res.json().catch(() => ({}));
+      alert(`Delete failed: ${body.error || res.statusText}`);
+      if (row) row.style.opacity = "1";
+    }
+  } catch (err) {
+    alert(`Delete failed: ${err.message}`);
+    if (row) row.style.opacity = "1";
+  }
 }
 
 // Init

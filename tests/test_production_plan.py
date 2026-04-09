@@ -62,11 +62,8 @@ def tmp_project(tmp_path):
 @pytest.fixture
 def fake_api_keys():
     return {
-        "OLLAMA_BASE_URL": "http://localhost:11434",
-        "OLLAMA_MODEL": "llama3.2",
-        "USE_OPENROUTER": "",
-        "OPENROUTER_API_KEY": "",
-        "OPENROUTER_MODEL": "deepseek/deepseek-chat",
+        "OPENROUTER_API_KEY": "fake-test-key",
+        "OPENROUTER_MODEL": "anthropic/claude-sonnet-4-5",
     }
 
 
@@ -218,11 +215,8 @@ class TestProductionPlanModule:
 
     def test_generate_calls_openrouter_when_configured(self, tmp_project):
         api_keys = {
-            "USE_OPENROUTER": "true",
             "OPENROUTER_API_KEY": "sk-test-key",
-            "OPENROUTER_MODEL": "deepseek/deepseek-chat",
-            "OLLAMA_BASE_URL": "http://localhost:11434",
-            "OLLAMA_MODEL": "llama3.2",
+            "OPENROUTER_MODEL": "anthropic/claude-sonnet-4-5",
         }
         pm = ProductionPlanModule(tmp_project, api_keys=api_keys)
         good_response = json.dumps({
@@ -238,9 +232,9 @@ class TestProductionPlanModule:
             "image_search_queries": ["melting glacier", "polar bear ice"],
             "script_guidance": "factual",
         })
-        with patch.object(pm, "_call_openrouter", return_value=good_response) as mock_or:
+        with patch("src.production_plan.call_llm", return_value=good_response) as mock_llm:
             plan = pm.generate("Climate Change", 5.0)
-        mock_or.assert_called_once()
+        mock_llm.assert_called_once()
         assert plan.topic == "Climate Change"
 
 
@@ -346,38 +340,21 @@ class TestModule3UsesPlan:
             script_guidance="Use authoritative but warm narration",
         )
 
-        # We capture the user_prompt by mocking the LLM calls
+        # We capture the user_prompt by mocking call_llm
         captured = {}
 
-        def fake_openrouter(system_prompt, user_prompt, api_key, model):
+        def fake_llm(system_prompt, user_prompt, api_keys=None, **kwargs):
             captured["user_prompt"] = user_prompt
             return _minimal_script_json("AI in Healthcare", 300)
 
-        with patch.object(m, "_call_openrouter", side_effect=fake_openrouter):
-            with patch.object(m, "_call_ollama", return_value=_minimal_script_json("AI in Healthcare", 300)):
-                # We can't easily test which path is taken so just call generate_script_ollama directly
-                try:
-                    m.generate_script_ollama("AI in Healthcare", 5.0, plan=plan)
-                except Exception:
-                    pass
+        with patch("src.module_3_script_voiceover.call_llm", side_effect=fake_llm):
+            m.generate_script_ollama("AI in Healthcare", 5.0, plan=plan)
 
-        # The method augments user_prompt with plan notes
-        # Test the augmentation logic directly
-        plan_hints: list[str] = []
-        if plan.tone:
-            plan_hints.append(f"Tone: {plan.tone.value if hasattr(plan.tone, 'value') else plan.tone}")
-        if plan.target_audience:
-            plan_hints.append(f"Target audience: {plan.target_audience}")
-        if plan.cultural_context:
-            plan_hints.append(f"Cultural context: {plan.cultural_context}")
-        if plan.avoid_list:
-            plan_hints.append(f"AVOID these topics/visuals: {', '.join(plan.avoid_list)}")
-        if plan.script_guidance:
-            plan_hints.append(f"Script guidance: {plan.script_guidance}")
-
-        assert len(plan_hints) == 5
-        assert "cinematic" in plan_hints[0]
-        assert "medical students" in plan_hints[1]
+        # Verify the user_prompt was augmented with plan notes
+        assert "user_prompt" in captured
+        assert "cinematic" in captured["user_prompt"].lower()
+        assert "medical students" in captured["user_prompt"]
+        assert "ADDITIONAL PRODUCTION NOTES" in captured["user_prompt"]
 
     def test_no_plan_generates_script_normally(self, tmp_project, fake_api_keys):
         """Without production plan, generate_script_ollama works as before."""
@@ -385,7 +362,7 @@ class TestModule3UsesPlan:
         m = ScriptModule(tmp_project, api_keys=fake_api_keys)
         script_json = _minimal_script_json("Deep Ocean", 180)
 
-        with patch.object(m, "_call_ollama", return_value=script_json):
+        with patch("src.module_3_script_voiceover.call_llm", return_value=script_json):
             script = m.generate_script_ollama("Deep Ocean", 3.0, plan=None)
 
         assert script.topic == "Deep Ocean"

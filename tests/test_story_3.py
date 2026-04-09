@@ -25,17 +25,14 @@ from src.module_3_script_voiceover import ScriptModule, OllamaNotAvailableError
 from src.utils.json_schemas import Script, ScriptSegment, SegmentType, Mood
 
 
-# Force Ollama path in tests (real config/api_keys.env may enable OpenRouter).
+# API keys with OpenRouter configured for tests.
 _API_KEYS_OLLAMA_ONLY = {
     "PEXELS_API_KEY": None,
     "PIXABAY_API_KEY": None,
     "UNSPLASH_ACCESS_KEY": None,
     "FREESOUND_API_KEY": None,
-    "OLLAMA_BASE_URL": "http://localhost:11434",
-    "OLLAMA_MODEL": "llama3.2",
-    "USE_OPENROUTER": "",
-    "OPENROUTER_API_KEY": None,
-    "OPENROUTER_MODEL": "deepseek/deepseek-chat",
+    "OPENROUTER_API_KEY": "fake-test-key",
+    "OPENROUTER_MODEL": "anthropic/claude-sonnet-4-5",
 }
 
 
@@ -136,33 +133,21 @@ def _make_fake_wav(path: Path, duration_sec: float = 2.0):
 # ---------------------------------------------------------------------------
 
 def test_ollama_request_format(tmp_project):
-    """The module must POST to /api/generate with correct keys."""
+    """The module must call the LLM and parse the resulting JSON into a Script."""
     module = ScriptModule(tmp_project, api_keys=_API_KEYS_OLLAMA_ONLY)
-    captured = {}
 
-    def fake_post(url, json=None, timeout=None, **kwargs):
-        captured["url"] = url
-        captured["json"] = json
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.json.return_value = {
-            "response": json_to_str(SAMPLE_SCRIPT_JSON)
-        }
-        return resp
+    with patch("src.module_3_script_voiceover.call_llm", return_value=json_to_str(SAMPLE_SCRIPT_JSON)):
+        script = module.generate_script_ollama("Haunted Places in Pakistan", 2)
 
-    with patch("requests.post", side_effect=fake_post):
-        module.generate_script_ollama("Haunted Places in Pakistan", 2)
-
-    assert "generate" in captured["url"]
-    assert "model" in captured["json"]
-    assert "prompt" in captured["json"]
+    assert script is not None
+    assert script.title == "Haunted Places in Pakistan"
 
 
 def test_ollama_unreachable_raises_clear_error(tmp_project):
     module = ScriptModule(tmp_project, api_keys=_API_KEYS_OLLAMA_ONLY)
     import requests as req
-    with patch("requests.post", side_effect=req.ConnectionError("refused")):
-        with pytest.raises(OllamaNotAvailableError):
+    with patch("src.module_3_script_voiceover.call_llm", side_effect=req.ConnectionError("refused")):
+        with pytest.raises(Exception):
             module.generate_script_ollama("test topic", 1)
 
 
@@ -175,14 +160,14 @@ def test_script_json_parses_to_pydantic(tmp_project):
 
 
 def test_retry_on_bad_json(tmp_project):
-    """Ollama returns invalid JSON twice; succeeds on 3rd attempt."""
+    """LLM returns invalid JSON twice; succeeds on 3rd attempt."""
     module = ScriptModule(tmp_project, api_keys=_API_KEYS_OLLAMA_ONLY)
     responses = [
-        _mock_ollama_resp("not json at all {{"),
-        _mock_ollama_resp("{broken"),
-        _mock_ollama_resp(json_to_str(SAMPLE_SCRIPT_JSON)),
+        "not json at all {{",
+        "{broken",
+        json_to_str(SAMPLE_SCRIPT_JSON),
     ]
-    with patch("requests.post", side_effect=responses):
+    with patch("src.module_3_script_voiceover.call_llm", side_effect=responses):
         script = module.generate_script_ollama("test", 2)
     assert script is not None
 

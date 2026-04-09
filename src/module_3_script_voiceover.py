@@ -31,7 +31,7 @@ AVAILABLE_VOICES = [
     "en-GB-RyanNeural",         # British male
     "en-GB-SoniaNeural",        # British female
 ]
-DEFAULT_NARRATOR_VOICE = "en-US-GuyNeural"
+DEFAULT_NARRATOR_VOICE = "en-US-AriaNeural"
 
 # ---------------------------------------------------------------------------
 # Kokoro-ONNX TTS (local, free, natural voice)
@@ -52,6 +52,7 @@ _KOKORO_DEFAULT_VOICE = "am_adam"
 
 from src.project_manager import update_pipeline_status
 from src.utils.config_loader import load_api_keys, load_ollama_prompts
+from src.utils.llm_client import call_llm
 from src.utils.json_schemas import (
     ModuleStatus,
     Script,
@@ -80,8 +81,6 @@ class ScriptModule:
     ):
         self.project_dir = Path(project_dir)
         self.api_keys = api_keys if api_keys is not None else load_api_keys()
-        self.ollama_url = self.api_keys.get("OLLAMA_BASE_URL", "http://localhost:11434")
-        self.ollama_model = self.api_keys.get("OLLAMA_MODEL", "llama3.2")
         self.skip_director = skip_director
         self._audio_dir.mkdir(parents=True, exist_ok=True)
 
@@ -105,6 +104,9 @@ class ScriptModule:
 
         script = self.generate_script_ollama(topic, duration_min, plan=plan)
 
+        # Duration pacing check — revise script if estimated VO length is off target
+        script = self._enforce_duration_pacing(script, duration_min, plan=plan)
+
         # Enhance the opening hook
         script = self._enhance_hook(script, plan)
 
@@ -112,10 +114,29 @@ class ScriptModule:
         if not self.skip_director:
             script = self._run_script_director(script)
 
+        # Clear cached voiceover files so current TTS engine is always used
+        for old_wav in self._audio_dir.glob("voiceover_*.wav"):
+            old_wav.unlink(missing_ok=True)
+        combined = self._audio_dir / "voiceover.wav"
+        combined.unlink(missing_ok=True)
+
         script = self.generate_all_voiceovers(script)
         combined_path = self._audio_dir / "voiceover.wav"
         self.concatenate_voiceovers(script, combined_path)
-        script = script.model_copy(update={"total_voiceover_path": str(combined_path)})
+
+        # Log actual vs target duration
+        total_vo_dur = sum(
+            s.voiceover_duration_sec or 0.0 for s in script.segments
+        )
+        target_sec = duration_min * 60
+        logger.info(
+            "Target duration: %.0fs, Actual TTS: %.1fs (%.0f%%)",
+            target_sec, total_vo_dur, (total_vo_dur / target_sec * 100) if target_sec > 0 else 0,
+        )
+        script = script.model_copy(update={
+            "total_voiceover_path": str(combined_path),
+            "total_voiceover_duration_sec": total_vo_dur,
+        })
         self.save_script(script)
         self._update_status(ModuleStatus.COMPLETE)
         return script
@@ -170,6 +191,65 @@ class ScriptModule:
             logger.warning("Hook enhancement failed: %s — using original intro", e)
             return script
 
+    def _enforce_duration_pacing(self, script: Script, duration_min: float, plan=None) -> Script:
+        """Check estimated voiceover duration vs target; ask LLM to revise if off.
+
+        Rule of thumb: ~2.0 words/second for natural TTS narration.
+        Conservative estimate ensures scripts come in under target, not over.
+        If estimated is >110% or <80% of target, request revision passes.
+        """
+        _WPS = 2.0  # conservative: Kokoro/edge-tts measured at 2.8-3.2 WPS
+        target_sec = duration_min * 60
+        total_words = sum(len((s.text or "").split()) for s in script.segments)
+        estimated_sec = total_words / _WPS
+
+        logger.info(
+            "Duration check: target=%.0fs, estimated=%.1fs (%d words @ %.1f wps)",
+            target_sec, estimated_sec, total_words, _WPS,
+        )
+
+        if 0.8 * target_sec <= estimated_sec <= 1.1 * target_sec:
+            return script  # within acceptable range
+
+        lo, hi = 0.8 * target_sec, 1.1 * target_sec
+        for attempt in range(3):
+            direction = "too long" if estimated_sec > target_sec else "too short"
+            if estimated_sec > hi:
+                target_words_hint = int(target_sec / _WPS)
+                instruction = (
+                    f"This script is ~{estimated_sec:.0f}s but the target is {target_sec:.0f}s. "
+                    f"Tighten to {target_words_hint} words or fewer — cut filler, combine ideas, keep the hook. "
+                    "Return the complete revised script as JSON."
+                )
+            else:
+                instruction = (
+                    f"This script is ~{estimated_sec:.0f}s but the target is {target_sec:.0f}s. "
+                    "Expand with more detail, examples, or transitional narration. "
+                    "Return the complete revised script as JSON."
+                )
+
+            logger.info("Script is %s (attempt %d/3) — requesting LLM revision", direction, attempt + 1)
+            try:
+                script_json = json.dumps(script.model_dump(), indent=2, default=str)
+                system_prompt = "You are a professional video scriptwriter. Revise the script duration. Return ONLY valid JSON."
+                user_prompt = f"{instruction}\n\n{script_json}"
+                raw = call_llm(system_prompt, user_prompt, self.api_keys, max_tokens=6000)
+                revised = self.parse_script_json(raw)
+                revised_words = sum(len((s.text or "").split()) for s in revised.segments)
+                revised_estimated = revised_words / _WPS
+                logger.info("Revision %d: %d words → ~%.1fs (target %.0fs)", attempt + 1, revised_words, revised_estimated, target_sec)
+                script = revised
+                estimated_sec = revised_estimated
+                if lo <= estimated_sec <= hi:
+                    logger.info("Duration within target range — done")
+                    return script
+            except Exception as e:
+                logger.warning("Duration revision %d failed: %s", attempt + 1, e)
+                break
+
+        logger.warning("Could not reach target duration after revisions — using best attempt (%.1fs)", estimated_sec)
+        return script
+
     def _run_script_director(self, draft: Script) -> Script:
         """Save script_draft.json, run ScriptDirector review, return revised script."""
         # Persist the raw draft so the user can compare before/after
@@ -189,7 +269,7 @@ class ScriptModule:
             return draft
 
     # ------------------------------------------------------------------
-    # Story 3.1 — Ollama script generation
+    # Story 3.1 — Script generation via OpenRouter
     # ------------------------------------------------------------------
 
     def generate_script_ollama(
@@ -198,15 +278,17 @@ class ScriptModule:
         duration_min: float,
         plan=None,  # Optional[ProductionPlan] — avoid circular import
     ) -> Script:
-        """Generate script via OpenRouter (if configured) or local Ollama."""
+        """Generate script via OpenRouter (claude-sonnet-4-5)."""
         prompts = load_ollama_prompts()
         system_prompt = prompts["script_generation"]["system"]
         user_template = prompts["script_generation"]["user_template"]
         duration_sec = int(duration_min * 60)
+        target_words = int(duration_sec / 2.0)
         user_prompt = user_template.format(
             topic=topic,
             duration=duration_min,
             duration_sec=duration_sec,
+            target_words=target_words,
         )
 
         # Augment prompt with production plan settings
@@ -227,75 +309,17 @@ class ScriptModule:
                     f"- {h}" for h in plan_hints
                 )
 
-        use_openrouter = self.api_keys.get("USE_OPENROUTER", "").lower() == "true"
-        or_key = self.api_keys.get("OPENROUTER_API_KEY", "")
-        or_model = self.api_keys.get("OPENROUTER_MODEL", "deepseek/deepseek-chat")
-
         last_error: Exception = Exception("Unknown error")
         for attempt in range(_MAX_LLM_RETRIES):
             try:
-                if use_openrouter and or_key:
-                    raw_text = self._call_openrouter(system_prompt, user_prompt, or_key, or_model)
-                else:
-                    raw_text = self._call_ollama(system_prompt, user_prompt)
+                raw_text = call_llm(system_prompt, user_prompt, self.api_keys)
                 return self.parse_script_json(raw_text)
-            except OllamaNotAvailableError:
-                raise
             except (json.JSONDecodeError, ValueError, KeyError) as e:
                 last_error = e
                 logger.warning("Attempt %d: bad JSON from LLM: %s", attempt + 1, e)
                 continue
 
         raise last_error
-
-    def _call_openrouter(
-        self, system_prompt: str, user_prompt: str, api_key: str, model: str
-    ) -> str:
-        """Call OpenRouter chat completions API (OpenAI-compatible)."""
-        logger.info("Using OpenRouter model: %s", model)
-        resp = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://scripttoreel.local",
-                "X-Title": "ScriptToReel",
-            },
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                "temperature": 0.7,
-                "max_tokens": 4096,
-            },
-            timeout=120,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
-
-    def _call_ollama(self, system_prompt: str, user_prompt: str) -> str:
-        """Call local Ollama generate API."""
-        try:
-            resp = requests.post(
-                f"{self.ollama_url}/api/generate",
-                json={
-                    "model": self.ollama_model,
-                    "prompt": f"{system_prompt}\n\n{user_prompt}",
-                    "stream": False,
-                    "options": {"temperature": 0.7, "num_predict": -1},
-                },
-                timeout=300,
-            )
-            resp.raise_for_status()
-            return resp.json().get("response", "")
-        except requests.ConnectionError as e:
-            raise OllamaNotAvailableError(
-                f"Cannot connect to Ollama at {self.ollama_url}. "
-                "Is it running? Start with: ollama serve"
-            ) from e
 
     def parse_script_json(self, raw_text: str) -> Script:
         """Extract JSON from LLM response, validate with Pydantic."""
@@ -426,7 +450,13 @@ class ScriptModule:
 
         kokoro_voice = _KOKORO_VOICE_MAP.get(voice, _KOKORO_DEFAULT_VOICE)
         k = Kokoro(str(_KOKORO_MODEL), str(_KOKORO_VOICES))
-        samples, sample_rate = k.create(text, voice=kokoro_voice, speed=1.0)
+        try:
+            samples, sample_rate = k.create(text, voice=kokoro_voice, speed=1.0)
+        except AttributeError as exc:
+            raise RuntimeError(
+                f"Kokoro espeak-ng version mismatch ({exc}). "
+                "Fix: pip install --upgrade kokoro-onnx  or reinstall espeak-ng."
+            ) from exc
 
         # Write raw samples to a temp file then re-encode to 22050 Hz mono
         # (consistent with edge-tts / piper output format)
@@ -437,8 +467,10 @@ class ScriptModule:
                 [
                     self._ffmpeg_bin(),
                     "-y", "-i", str(tmp),
-                    "-ar", "22050", "-ac", "1",
-                    "-af", "highpass=f=80,lowpass=f=8000",
+                    "-ar", "44100", "-ac", "1",
+                    # highpass removes mic rumble; presence boost at 3kHz adds speech clarity
+                    # No lowpass — keeping full bandwidth makes voice sound natural, not telephonic
+                    "-af", "highpass=f=80,equalizer=f=3000:width_type=o:width=2:g=2",
                     str(out_path),
                 ],
                 check=True,
@@ -455,18 +487,20 @@ class ScriptModule:
             raise RuntimeError("edge-tts not installed: pip install edge-tts") from exc
 
         async def _generate() -> None:
-            communicate = edge_tts.Communicate(text, voice)
+            communicate = edge_tts.Communicate(text, voice, rate="+10%")
             mp3_path = out_path.with_suffix(".mp3")
             await communicate.save(str(mp3_path))
             if not mp3_path.exists() or mp3_path.stat().st_size < 100:
                 raise RuntimeError(f"edge-tts produced no output at {mp3_path}")
-            # Convert MP3 → WAV (22050 Hz mono, matching piper output)
+            # Convert MP3 → WAV (44100 Hz mono)
+            # No lowpass: keeping full bandwidth prevents the telephone/robotic effect
+            # Presence boost at 3kHz adds speech clarity and warmth
             subprocess.run(
                 [
                     self._ffmpeg_bin(),
                     "-y", "-i", str(mp3_path),
-                    "-ar", "22050", "-ac", "1",
-                    "-af", "highpass=f=80,lowpass=f=8000",
+                    "-ar", "44100", "-ac", "1",
+                    "-af", "highpass=f=80,equalizer=f=3000:width_type=o:width=2:g=2",
                     str(out_path),
                 ],
                 check=True,
@@ -564,8 +598,8 @@ class ScriptModule:
         # Convert AIFF → WAV, upsample to 22050 Hz mono for consistency with piper
         subprocess.run(
             [self._ffmpeg_bin(), "-y", "-i", str(aiff),
-             "-ar", "22050", "-ac", "1",
-             "-af", "highpass=f=80,lowpass=f=8000",  # gentle EQ to reduce tinny quality
+             "-ar", "44100", "-ac", "1",
+             "-af", "highpass=f=80,equalizer=f=3000:width_type=o:width=2:g=2",
              str(out_path)],
             check=True,
             capture_output=True,
@@ -577,8 +611,11 @@ class ScriptModule:
     ) -> Script:
         updated_segments = []
         for seg in script.segments:
-            # Use per-segment voice if set; fall back to script narrator_voice
-            voice = seg.voice or script.narrator_voice or DEFAULT_NARRATOR_VOICE
+            # Use per-segment voice if explicitly set to a known voice;
+            # otherwise use DEFAULT_NARRATOR_VOICE (code-level control).
+            voice = DEFAULT_NARRATOR_VOICE
+            if seg.voice and seg.voice in AVAILABLE_VOICES:
+                voice = seg.voice
             wav = self.generate_voiceover_segment(seg.text, seg.id, voice=voice)
             dur = _wav_duration(wav)
             updated_segments.append(

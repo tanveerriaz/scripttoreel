@@ -67,6 +67,7 @@ class ValidationModule:
         checks.append(self.check_file_size(output_path))
         checks.append(self.check_frame_count(probe))
         checks.append(self.check_colorspace(probe))
+        checks.append(self.check_not_black(output_path, probe))
 
         all_passed = all(c.passed for c in checks)
         file_size_mb = round(Path(output_path).stat().st_size / 1_000_000, 2) if Path(output_path).exists() else None
@@ -297,6 +298,41 @@ class ValidationModule:
             print(f"\nValidation {'PASSED' if report.passed else 'FAILED'}")
             for c in report.checks:
                 print(f"  {'✅' if c.passed else '❌'} {c.name}: {c.message or 'OK'}")
+
+    def check_not_black(self, output_path: str, probe: dict) -> ValidationCheck:
+        """Fail if >80% of the video is pure black — catches blank placeholder renders."""
+        import re  # noqa: PLC0415
+        try:
+            total_dur = float(probe.get("format", {}).get("duration", 0) or 0)
+            if total_dur <= 0:
+                return ValidationCheck(
+                    name="not_black", passed=True,
+                    expected="<80% black", actual="skipped (no duration)", message="",
+                )
+            result = subprocess.run(
+                [
+                    "ffmpeg", "-i", output_path,
+                    "-vf", "blackdetect=d=0.5:pix_th=0.10",
+                    "-an", "-f", "null", "-",
+                ],
+                capture_output=True, text=True, timeout=60,
+            )
+            durations = [float(m) for m in re.findall(r"black_duration:([\d.]+)", result.stderr)]
+            total_black = sum(durations)
+            black_ratio = total_black / total_dur
+            passed = black_ratio < 0.80
+            return ValidationCheck(
+                name="not_black",
+                passed=passed,
+                expected="<80% black",
+                actual=f"{black_ratio * 100:.0f}% black",
+                message="" if passed else "Video is mostly black — render likely failed (SDXL/visual assets missing?)",
+            )
+        except Exception as e:
+            return ValidationCheck(
+                name="not_black", passed=True,
+                expected="<80% black", actual="check skipped", message=str(e),
+            )
 
     # ------------------------------------------------------------------
     # Utilities

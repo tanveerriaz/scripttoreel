@@ -80,16 +80,32 @@ class RenderModule:
             final_out = self.output_dir / "final_video.mp4"
 
             # Step 1 + 2: build and concatenate scene clips
+            video_no_caps = tmp / "video_no_caps.mp4"
             video_only = tmp / "video_only.mp4"
             if orch.scenes:
                 clips = self._build_all_scene_clips(orch, tmp)
-                self._write_concat(clips, str(video_only), orch.total_duration_sec)
+                self._write_concat(clips, str(video_no_caps), orch.total_duration_sec, orch.scenes)
             else:
                 logger.warning(
                     "No scenes — rendering black placeholder for %.1fs",
                     orch.total_duration_sec,
                 )
-                self._render_placeholder(orch.total_duration_sec, video_only)
+                self._render_placeholder(orch.total_duration_sec, video_no_caps)
+
+            # Step 2b: composite burned-in captions
+            cap_clips = self._build_caption_clips(orch.scenes, tmp) if orch.scenes else []
+            if cap_clips:
+                from moviepy import VideoFileClip, CompositeVideoClip
+                base = VideoFileClip(str(video_no_caps))
+                captioned = CompositeVideoClip([base] + cap_clips, size=(_W, _H))
+                captioned.write_videofile(
+                    str(video_only), fps=_FPS, codec=self._hw_encoder,
+                    audio=False, ffmpeg_params=self._video_ffmpeg_params(), logger=None,
+                )
+                base.close()
+                captioned.close()
+            else:
+                shutil.copy(str(video_no_caps), str(video_only))
 
             # Step 3: mix audio via ffmpeg (LUFS, amix)
             audio_out = tmp / "mixed_audio.aac"
@@ -130,6 +146,12 @@ class RenderModule:
     ):
         """Return a fully-processed MoviePy clip for one scene."""
         from moviepy import ColorClip
+
+        # Title/outro card scenes get a special render path
+        if getattr(scene, "is_title_card", False):
+            return self._build_title_card(scene, tmp)
+        if getattr(scene, "is_outro_card", False):
+            return self._build_outro_card(scene, tmp)
 
         asset_path = Path(scene.asset_path)
         duration = scene.duration_sec
@@ -358,8 +380,9 @@ class RenderModule:
     def _apply_fades(self, clip, duration: float, is_first: bool, is_last: bool):
         from moviepy import vfx
         effects = []
-        if is_first:
-            effects.append(vfx.FadeIn(0.4))
+        # No fade-in on scene 0 — prevents a black opening frame
+        # (thumbnails and autoplay need a real image at frame 0).
+        # Text overlays get their own fade-in separately.
         if is_last:
             effects.append(vfx.FadeOut(0.5))
         if effects:
@@ -413,8 +436,9 @@ class RenderModule:
     # Concatenation (MoviePy)
     # ------------------------------------------------------------------
 
-    def _write_concat(self, clips: list, out_path: str, total_duration: float) -> None:
-        """Concatenate scene clips with dissolve transitions and write to file."""
+    def _write_concat(self, clips: list, out_path: str, total_duration: float,
+                       scenes: list[Scene] | None = None) -> None:
+        """Concatenate scene clips with per-scene transitions and write to file."""
         from moviepy import concatenate_videoclips
 
         if not clips:
@@ -433,21 +457,33 @@ class RenderModule:
             clips[0].close()
             return
 
-        # Apply crossfade transitions between consecutive clips
+        # Apply per-scene transitions between consecutive clips
         transitioned = []
         for i, clip in enumerate(clips):
             if i == 0:
                 transitioned.append(clip)
             else:
-                # Each subsequent clip starts _TRANSITION_DUR earlier
-                # and fades in over the transition window
-                fade_dur = min(_TRANSITION_DUR, clips[i - 1].duration / 2, clip.duration / 2)
-                from moviepy import vfx
-                clip_faded = clip.with_effects([vfx.CrossFadeIn(fade_dur)])
-                clip_faded = clip_faded.with_start(
-                    sum(c.duration for c in clips[:i]) - fade_dur * i
-                )
-                transitioned.append(clip_faded)
+                # Determine transition from scene metadata
+                t_type = TransitionType.DISSOLVE
+                if scenes and i < len(scenes):
+                    t_type = scenes[i].transition_in
+
+                if t_type == TransitionType.CUT:
+                    # Hard cut — no overlap
+                    clip_cut = clip.with_start(
+                        sum(c.duration for c in clips[:i])
+                    )
+                    transitioned.append(clip_cut)
+                else:
+                    # DISSOLVE or CROSSFADE — use CrossFadeIn
+                    base_dur = 0.8 if t_type == TransitionType.CROSSFADE else _TRANSITION_DUR
+                    fade_dur = min(base_dur, clips[i - 1].duration / 2, clip.duration / 2)
+                    from moviepy import vfx
+                    clip_faded = clip.with_effects([vfx.CrossFadeIn(fade_dur)])
+                    clip_faded = clip_faded.with_start(
+                        sum(c.duration for c in clips[:i]) - fade_dur * i
+                    )
+                    transitioned.append(clip_faded)
 
         try:
             final = concatenate_videoclips(transitioned, method="compose")
@@ -605,6 +641,7 @@ class RenderModule:
     ) -> None:
         inputs: list[str] = []
         volumes: list[float] = []
+        start_times: list[float] = []
         bg_input_idx: int | None = None
 
         if orch.voiceover_tracks:
@@ -613,11 +650,13 @@ class RenderModule:
                 if p.exists():
                     inputs.append(track.local_path)
                     volumes.append(track.volume)
+                    start_times.append(getattr(track, "start_time", 0.0) or 0.0)
 
         if orch.background_music and Path(orch.background_music.local_path).exists():
             bg_input_idx = len(inputs)
             inputs.append(orch.background_music.local_path)
             volumes.append(orch.background_music.volume)
+            start_times.append(0.0)
 
         for scene in orch.scenes:
             for sfx in scene.sfx_tracks:
@@ -625,6 +664,7 @@ class RenderModule:
                 if p.exists():
                     inputs.append(sfx.local_path)
                     volumes.append(sfx.volume)
+                    start_times.append(0.0)
 
         if not inputs:
             subprocess.run([
@@ -636,16 +676,18 @@ class RenderModule:
             ], capture_output=True, check=True)
             return
 
-        # Voiceover → normalise to broadcast speech level (-14 LUFS)
-        # Music/SFX  → normalise to background level (-35 LUFS) then apply volume
-        #              This prevents loudnorm from re-amplifying the music back up.
+        # Voice EQ: presence boost + de-mud + light compression for broadcast clarity
+        _VO_EQ = "highpass=f=80,equalizer=f=200:t=q:w=1:g=-1,equalizer=f=3000:t=q:w=1.5:g=2,acompressor=threshold=-20dB:ratio=3:attack=5:release=50"
+        # Voiceover → broadcast speech level (-14 LUFS)
         _VO_LUFS    = "loudnorm=I=-14:TP=-1.5:LRA=11"
-        _MUSIC_LUFS = "loudnorm=I=-35:TP=-3:LRA=7"
+        # Music/SFX → background level (-35 LUFS)
+        _MUSIC_LUFS = "loudnorm=I=-24:TP=-2:LRA=9"
 
         if len(inputs) == 1:
             is_music = (bg_input_idx == 0 and orch.background_music)
             lufs = _MUSIC_LUFS if is_music else _VO_LUFS
-            af = f"volume={volumes[0]:.4f},{lufs}"
+            eq = "" if is_music else f"{_VO_EQ},"
+            af = f"volume={volumes[0]:.4f},{eq}{lufs}"
             if is_music:
                 af += self._bg_music_afade(orch.background_music, total_duration)
             af += f",apad=whole_dur={total_duration}"
@@ -653,6 +695,7 @@ class RenderModule:
                 "ffmpeg", "-y",
                 "-i", inputs[0],
                 "-af", af,
+                "-ar", "44100", "-ac", "2",
                 "-t", str(total_duration),
                 "-c:a", "aac", "-b:a", "192k",
                 str(out_path),
@@ -663,23 +706,45 @@ class RenderModule:
         for inp in inputs:
             cmd += ["-i", inp]
 
+        # Build per-input filter chains
         vol_parts = []
-        vol_outs = []
+        vo_label = None
+        music_label = None
         for i, vol in enumerate(volumes):
-            vol_outs.append(f"av{i}")
             is_music = (i == bg_input_idx and orch.background_music)
             lufs = _MUSIC_LUFS if is_music else _VO_LUFS
+            eq = "" if is_music else f"{_VO_EQ},"
             fade_filters = self._bg_music_afade(orch.background_music, total_duration) if is_music else ""
+            # Delay track if start_time > 0 (e.g. VO starts after title card)
+            delay_ms = int((start_times[i] if i < len(start_times) else 0) * 1000)
+            delay_filter = f"adelay={delay_ms}|{delay_ms}," if delay_ms > 0 else ""
+            label = f"av{i}"
             vol_parts.append(
-                f"[{i}:a]volume={vol:.4f},{lufs}{fade_filters},"
-                f"apad=whole_dur={total_duration}[av{i}]"
+                f"[{i}:a]{delay_filter}volume={vol:.4f},{eq}{lufs}{fade_filters},"
+                f"apad=whole_dur={total_duration}[{label}]"
             )
+            if is_music:
+                music_label = label
+            elif vo_label is None:
+                vo_label = label
 
-        mix_inputs = "".join(f"[{v}]" for v in vol_outs)
-        fc = "; ".join(vol_parts) + f"; {mix_inputs}amix=inputs={len(inputs)}:normalize=0[aout]"
+        # Audio ducking: use sidechaincompress so music ducks when VO is present
+        if vo_label and music_label and len(inputs) == 2:
+            # Sidechain: music is compressed by VO signal
+            fc = "; ".join(vol_parts) + (
+                f"; [{music_label}][{vo_label}]sidechaincompress="
+                f"threshold=0.02:ratio=4:attack=200:release=800[ducked]"
+                f"; [{vo_label}][ducked]amix=inputs=2:normalize=0[aout]"
+            )
+        else:
+            # Fallback: simple amix for >2 inputs or no clear VO/music split
+            all_labels = "".join(f"[av{i}]" for i in range(len(inputs)))
+            fc = "; ".join(vol_parts) + f"; {all_labels}amix=inputs={len(inputs)}:normalize=0[aout]"
+
         cmd += [
             "-filter_complex", fc,
             "-map", "[aout]",
+            "-ar", "44100", "-ac", "2",
             "-t", str(total_duration),
             "-c:a", "aac", "-b:a", "192k",
             str(out_path),
@@ -687,15 +752,33 @@ class RenderModule:
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             logger.warning(
-                "Multi-track audio mix failed (falling back to voiceover only).\n"
+                "Audio mix with ducking failed — retrying without ducking.\n"
                 "FFmpeg stderr:\n%s",
                 result.stderr[-600:],
             )
-            subprocess.run([
-                "ffmpeg", "-y", "-i", inputs[0],
-                "-t", str(total_duration), "-c:a", "aac", "-b:a", "192k",
+            # Fallback: simple amix without sidechain
+            all_labels = "".join(f"[av{i}]" for i in range(len(inputs)))
+            fc_simple = "; ".join(vol_parts) + f"; {all_labels}amix=inputs={len(inputs)}:normalize=0[aout]"
+            cmd_retry = ["ffmpeg", "-y"]
+            for inp in inputs:
+                cmd_retry += ["-i", inp]
+            cmd_retry += [
+                "-filter_complex", fc_simple,
+                "-map", "[aout]",
+                "-ar", "44100", "-ac", "2",
+                "-t", str(total_duration),
+                "-c:a", "aac", "-b:a", "192k",
                 str(out_path),
-            ], capture_output=True, check=True)
+            ]
+            result2 = subprocess.run(cmd_retry, capture_output=True, text=True)
+            if result2.returncode != 0:
+                # Last resort: voiceover only
+                subprocess.run([
+                    "ffmpeg", "-y", "-i", inputs[0],
+                    "-ar", "44100", "-ac", "2",
+                    "-t", str(total_duration), "-c:a", "aac", "-b:a", "192k",
+                    str(out_path),
+                ], capture_output=True, check=True)
 
     @staticmethod
     def _bg_music_afade(track, total_duration: float) -> str:
@@ -733,31 +816,253 @@ class RenderModule:
     # Text overlay helpers (Pillow)
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Title Card (professional intro sequence)
+    # ------------------------------------------------------------------
+
+    def _build_title_card(self, scene: Scene, tmp: Path):
+        """Render a cinematic title card: serif title + gold divider + subtitle."""
+        from PIL import Image, ImageDraw
+        from moviepy import ImageClip, vfx
+
+        duration = scene.duration_sec
+        img = Image.new("RGBA", (_W, _H), (0, 0, 0, 255))
+        draw = ImageDraw.Draw(img)
+
+        # Fonts
+        title_font = self._resolve_font("title_serif", 76)
+        sub_font = self._resolve_font("overlay_sans", 32)
+
+        # Title text (from the first text overlay or caption)
+        title_text = ""
+        for ov in (scene.text_overlays or []):
+            if ov.text.strip():
+                title_text = ov.text.strip()
+                break
+        if not title_text and scene.caption_text:
+            title_text = scene.caption_text
+
+        # Measure and position title above center
+        title_lines = textwrap.wrap(title_text, width=35) or [title_text]
+        line_h = 76 + 12
+        title_h = len(title_lines) * line_h
+        title_y = int(_H / 2) - title_h - 30
+
+        for j, line in enumerate(title_lines):
+            lw = draw.textlength(line, font=title_font)
+            lx = int((_W - lw) / 2)
+            self._draw_text_outlined(
+                draw, (lx, title_y + j * line_h), line, font=title_font,
+                fill=(240, 235, 220, 255), outline_width=2, shadow=True,
+            )
+
+        # Gold horizontal divider
+        divider_y = int(_H / 2) + 5
+        divider_w = 220
+        gold = (201, 168, 76, 255)
+        div_x = int((_W - divider_w) / 2)
+        draw.rectangle([div_x, divider_y, div_x + divider_w, divider_y + 2], fill=gold)
+
+        # Subtitle below divider (topic or tagline)
+        sub_text = scene.caption_text or ""
+        if sub_text:
+            sw = draw.textlength(sub_text, font=sub_font)
+            sx = int((_W - sw) / 2)
+            sy = divider_y + 25
+            self._draw_text_outlined(
+                draw, (sx, sy), sub_text, font=sub_font,
+                fill=(180, 175, 165, 255), outline_width=1, shadow=False,
+            )
+
+        # Save as PNG and create clip
+        card_path = str(tmp / "title_card.png")
+        img.save(card_path, "PNG")
+
+        clip = ImageClip(card_path).with_duration(duration).with_fps(_FPS)
+        clip = clip.with_effects([vfx.FadeIn(1.5), vfx.FadeOut(0.5)])
+        return clip
+
+    def _build_outro_card(self, scene: Scene, tmp: Path):
+        """Render a cinematic outro card: closing text + gold divider + attribution."""
+        from PIL import Image, ImageDraw
+        from moviepy import ImageClip, vfx
+
+        duration = scene.duration_sec
+        img = Image.new("RGBA", (_W, _H), (0, 0, 0, 255))
+        draw = ImageDraw.Draw(img)
+
+        title_font = self._resolve_font("title_serif", 56)
+        attr_font = self._resolve_font("overlay_sans", 24)
+
+        # Closing text
+        closing = scene.caption_text or "Thank you for watching"
+        lines = textwrap.wrap(closing, width=40) or [closing]
+        line_h = 56 + 10
+        total_h = len(lines) * line_h
+        y_start = int(_H / 2) - total_h - 20
+
+        for j, line in enumerate(lines):
+            lw = draw.textlength(line, font=title_font)
+            lx = int((_W - lw) / 2)
+            self._draw_text_outlined(
+                draw, (lx, y_start + j * line_h), line, font=title_font,
+                fill=(240, 235, 220, 255), outline_width=2, shadow=True,
+            )
+
+        # Gold divider
+        divider_y = int(_H / 2) + 10
+        gold = (201, 168, 76, 255)
+        div_x = int((_W - 160) / 2)
+        draw.rectangle([div_x, divider_y, div_x + 160, divider_y + 2], fill=gold)
+
+        # Attribution
+        attr_text = "Generated by ScriptToReel"
+        aw = draw.textlength(attr_text, font=attr_font)
+        ax = int((_W - aw) / 2)
+        self._draw_text_outlined(
+            draw, (ax, divider_y + 25), attr_text, font=attr_font,
+            fill=(140, 135, 125, 255), outline_width=1, shadow=False,
+        )
+
+        card_path = str(tmp / "outro_card.png")
+        img.save(card_path, "PNG")
+
+        clip = ImageClip(card_path).with_duration(duration).with_fps(_FPS)
+        clip = clip.with_effects([vfx.FadeIn(0.5), vfx.FadeOut(1.0)])
+        return clip
+
+    # ------------------------------------------------------------------
+    # Burned-in Captions
+    # ------------------------------------------------------------------
+
+    def _build_caption_clips(self, scenes: list[Scene], tmp: Path) -> list:
+        """Build caption ImageClips for all scenes that have caption_text."""
+        from PIL import Image, ImageDraw
+        from moviepy import ImageClip
+
+        caption_clips = []
+        for scene in scenes:
+            # Skip title/outro cards — they render their own styled text
+            if getattr(scene, "is_title_card", False) or getattr(scene, "is_outro_card", False):
+                continue
+            text = getattr(scene, "caption_text", None)
+            if not text or not text.strip():
+                continue
+
+            # Split into chunks of ~7 words, sentence-aware
+            words = text.split()
+            chunks = []
+            chunk = []
+            for w in words:
+                chunk.append(w)
+                if len(chunk) >= 7 or w.endswith((".", "?", "!", ",", ";", ":")):
+                    chunks.append(" ".join(chunk))
+                    chunk = []
+            if chunk:
+                chunks.append(" ".join(chunk))
+            if not chunks:
+                continue
+
+            # Use VO-synced timing (caption_start/end_sec) instead of scene visual timing
+            cap_start = getattr(scene, "caption_start_sec", None) or scene.start_time
+            cap_end = getattr(scene, "caption_end_sec", None) or scene.end_time
+            cap_dur = cap_end - cap_start
+            start = cap_start
+            chunk_dur = cap_dur / len(chunks) if chunks else cap_dur
+
+            font = self._resolve_font("caption_bold", 46)
+
+            for ci, chunk_text in enumerate(chunks):
+                img = Image.new("RGBA", (_W, _H), (0, 0, 0, 0))
+                draw = ImageDraw.Draw(img)
+
+                # Wrap if very long
+                lines = textwrap.wrap(chunk_text, width=45) or [chunk_text]
+                line_h = 46 + 8
+                total_h = len(lines) * line_h
+
+                # Position: 82% down (above letterbox bars)
+                y_base = int(_H * 0.82) - total_h // 2
+
+                for j, line in enumerate(lines):
+                    lw = draw.textlength(line, font=font)
+                    lx = int((_W - lw) / 2)
+                    self._draw_text_outlined(
+                        draw, (lx, y_base + j * line_h), line, font=font,
+                        fill=(255, 255, 255, 255), outline_width=2,
+                        shadow=True, shadow_offset=(2, 2), shadow_alpha=120,
+                    )
+
+                cap_path = str(tmp / f"cap_{scene.id}_{ci}.png")
+                img.save(cap_path, "PNG")
+
+                cap_clip = (
+                    ImageClip(cap_path)
+                    .with_duration(chunk_dur)
+                    .with_start(start + ci * chunk_dur)
+                )
+                caption_clips.append(cap_clip)
+
+        return caption_clips
+
+    # ------------------------------------------------------------------
+    # Text overlay rendering (Pillow)
+    # ------------------------------------------------------------------
+
+    def _resolve_font(self, purpose: str, size: int):
+        """Load a Pillow font by purpose (title_serif, caption_bold, overlay_sans)."""
+        from PIL import ImageFont
+        font_config = self._presets.get("fonts", {})
+        candidates = font_config.get(purpose, [])
+        # Append generic fallbacks
+        candidates = list(candidates) + [
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ]
+        for path in candidates:
+            if Path(path).exists():
+                try:
+                    return ImageFont.truetype(path, size)
+                except Exception:
+                    pass
+        return ImageFont.load_default()
+
+    @staticmethod
+    def _draw_text_outlined(
+        draw, xy: tuple[int, int], text: str, font, fill=(255, 255, 255, 255),
+        outline_color=(0, 0, 0, 255), outline_width: int = 2,
+        shadow: bool = True, shadow_offset: tuple[int, int] = (3, 3),
+        shadow_alpha: int = 100,
+    ) -> None:
+        """Draw text with outline and optional drop shadow for professional look."""
+        x, y = xy
+        # Drop shadow
+        if shadow:
+            draw.text(
+                (x + shadow_offset[0], y + shadow_offset[1]),
+                text, font=font,
+                fill=(0, 0, 0, shadow_alpha),
+            )
+        # Outline: 8 compass directions
+        for dx in range(-outline_width, outline_width + 1):
+            for dy in range(-outline_width, outline_width + 1):
+                if dx == 0 and dy == 0:
+                    continue
+                draw.text((x + dx, y + dy), text, font=font, fill=outline_color)
+        # Fill
+        draw.text((x, y), text, font=font, fill=fill)
+
     def _render_overlay_png(self, overlay: TextOverlay, out_path: str) -> None:
         """Render a TextOverlay to a transparent 1920x1080 RGBA PNG via Pillow."""
-        from PIL import Image, ImageDraw, ImageFont
+        from PIL import Image, ImageDraw
 
         img = Image.new("RGBA", (_W, _H), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
 
         size, use_box, _ = self._overlay_style(overlay.style)
-
-        font = None
-        for candidate in [
-            "/Library/Fonts/Arial.ttf",
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
-            "/System/Library/Fonts/Helvetica.ttc",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        ]:
-            if Path(candidate).exists():
-                try:
-                    font = ImageFont.truetype(candidate, size)
-                    break
-                except Exception:
-                    pass
-        if font is None:
-            font = ImageFont.load_default()
+        font_purpose = "title_serif" if overlay.style == "title" else "overlay_sans"
+        font = self._resolve_font(font_purpose, size)
 
         lines = textwrap.wrap(overlay.text, width=50) or [overlay.text]
         line_height = size + 8
@@ -783,7 +1088,7 @@ class RenderModule:
             box_draw = ImageDraw.Draw(box_layer)
             box_draw.rectangle(
                 [x - pad, y - pad, x + int(max_w) + pad, y + total_h + pad],
-                fill=(0, 0, 0, int(0.65 * 255)),
+                fill=(0, 0, 0, int(0.55 * 255)),
             )
             img = Image.alpha_composite(img, box_layer)
             draw = ImageDraw.Draw(img)
@@ -791,7 +1096,7 @@ class RenderModule:
         for j, line in enumerate(lines):
             lw = draw.textlength(line, font=font)
             lx = int((_W - lw) / 2)
-            draw.text((lx, y + j * line_height), line, font=font, fill=(255, 255, 255, 255))
+            self._draw_text_outlined(draw, (lx, y + j * line_height), line, font=font)
 
         img.save(out_path, "PNG")
 

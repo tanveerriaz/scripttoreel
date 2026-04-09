@@ -111,6 +111,21 @@ text_styles:
     x: "(w-text_w)/2"
     y: "h*0.9"
 
+fonts:
+  title_serif:
+    - "/System/Library/Fonts/Supplemental/Georgia Bold.ttf"
+    - "/System/Library/Fonts/Supplemental/Georgia.ttf"
+    - "/System/Library/Fonts/Supplemental/Times New Roman Bold.ttf"
+    - "/System/Library/Fonts/Supplemental/Baskerville.ttc"
+  caption_bold:
+    - "/System/Library/Fonts/Avenir Next.ttc"
+    - "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
+    - "/System/Library/Fonts/Supplemental/Futura.ttc"
+  overlay_sans:
+    - "/System/Library/Fonts/Supplemental/Futura.ttc"
+    - "/System/Library/Fonts/Supplemental/Arial.ttf"
+    - "/System/Library/Fonts/Helvetica.ttc"
+
 audio:
   voiceover_volume: 1.0
   background_music_volume: 0.12    # -18dB approx

@@ -155,21 +155,17 @@ class TestScriptDirector:
         assert "openrouter.ai" in call_kwargs[0][0]
         assert isinstance(result, Script)
 
-    def test_review_falls_back_to_ollama_when_no_key(self):
-        """Without an OpenRouter key, the director should fall back to Ollama."""
+    def test_review_falls_back_when_llm_unavailable(self):
+        """When LLM raises, the director falls back to the original script."""
         director = ScriptDirector(api_keys=_API_KEYS_OLLAMA_ONLY)
         script = _make_script()
 
-        revised_json = json.dumps(script.model_dump(), default=str)
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {"response": revised_json}
-
-        with patch("requests.post", return_value=mock_resp) as mock_post:
+        with patch("src.ai_director.call_llm", side_effect=RuntimeError("no key")):
             result = director.review(script)
 
-        call_kwargs = mock_post.call_args
-        assert "localhost:11434" in call_kwargs[0][0]
+        # Falls back gracefully — returns original script unchanged
         assert isinstance(result, Script)
+        assert result.topic == script.topic
 
     def test_review_preserves_voiceover_paths(self):
         """The director must not overwrite voiceover_path on any segment."""

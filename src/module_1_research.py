@@ -23,7 +23,7 @@ from src.utils.api_handlers import (
     FreesoundClient,
 )
 from src.utils.config_loader import load_api_keys
-from src.utils.json_schemas import Asset, AssetType, ModuleStatus
+from src.utils.json_schemas import Asset, AssetSource, AssetType, ModuleStatus
 from src.utils.local_image_generator import LocalSDXLClient, build_image_prompt
 
 logger = logging.getLogger(__name__)
@@ -99,8 +99,35 @@ class ResearchModule:
         if len(queries) > 1:
             _add(self._safe_search(freesound.search_sounds, queries[1], f"Freesound SFX [{queries[1]}]"))
 
-        # Background music: dedicated search — longer tracks tagged role=MUSIC
-        _add(self._safe_search(freesound.search_music, topic, "Freesound music"))
+        # Background music: tone-aware queries for variety
+        # Map tone → diverse Freesound search queries
+        _TONE_MUSIC_QUERIES: dict[str, list[str]] = {
+            "documentary":  ["ambient cinematic background", "documentary score", "atmospheric pad"],
+            "educational":  ["ambient cinematic background", "documentary score", "atmospheric pad"],
+            "dramatic":     ["dramatic orchestral", "tension building music", "epic cinematic"],
+            "suspenseful":  ["suspenseful ambient", "dark tension music", "thriller soundtrack"],
+            "uplifting":    ["uplifting acoustic", "positive background music", "inspiring piano"],
+            "cinematic":    ["cinematic soundtrack", "film score ambient", "orchestral background"],
+            "casual":       ["lo-fi background", "chill acoustic", "light background music"],
+        }
+        plan_tone = ""
+        plan_music_kw: list[str] = []
+        plan_path_music = self.project_dir / "production_plan.json"
+        if plan_path_music.exists():
+            try:
+                plan_data = json.loads(plan_path_music.read_text())
+                plan_tone = plan_data.get("tone", "")
+                plan_music_kw = plan_data.get("background_music_keywords", [])
+            except Exception:
+                pass
+
+        music_queries = _TONE_MUSIC_QUERIES.get(plan_tone, [f"ambient background music {topic}"])
+        # Also add plan-specified music keywords
+        if plan_music_kw:
+            music_queries = plan_music_kw[:2] + music_queries[:1]
+
+        for mq in music_queries[:3]:
+            _add(self._safe_search(freesound.search_music, mq, f"Freesound music [{mq}]"))
 
         # AI image generation — locally via SDXL + MPS (graceful skip if not installed)
         tone = ""
@@ -111,9 +138,40 @@ class ResearchModule:
             except Exception:
                 pass
 
+        # Collect per-segment sdxl_prompt fields from script.json (highest quality prompts)
+        segment_sdxl_prompts: list[str] = []
+        script_path = self.project_dir / "script.json"
+        if script_path.exists():
+            try:
+                script_data = json.loads(script_path.read_text())
+                for seg in script_data.get("segments", []):
+                    sp = seg.get("sdxl_prompt", "")
+                    if sp and len(sp) > 20:
+                        segment_sdxl_prompts.append(sp)
+            except Exception:
+                pass
+
         # SDXL is the sole visual source — generate enough images for full coverage.
-        # Rule: need 1 image per 5 sec of video → scale num_images by duration.
-        images_per_query = max(3, round((duration_min * 60) / 5 / max_queries))
+        # Rule: 1 image per 5s of video + 50% buffer. Cap per query at 8 for speed.
+        import math as _math  # noqa: PLC0415
+        total_needed = (duration_min * 60) / 5
+        images_per_query = max(2, min(8, _math.ceil(total_needed * 1.5 / max_queries)))
+
+        # Use fewer inference steps for short videos to keep generation time reasonable:
+        # ≤1min → 22 steps (~30s/image), >1min → 32 steps (~50s/image, sharper detail)
+        num_steps = 22 if duration_min <= 1.0 else 32
+
+        # Build SDXL prompt list: prefer per-segment sdxl_prompts, then plan prompts, then queries
+        sdxl_prompts: list[str] = []
+        if segment_sdxl_prompts:
+            # Per-segment prompts are most specific — generate 2 candidates each
+            sdxl_prompts = segment_sdxl_prompts
+            images_per_query = 2  # 2 candidates per scene, orchestrator picks best
+            logger.info("SDXL: using %d per-segment sdxl_prompt fields", len(sdxl_prompts))
+        else:
+            # Fall back to queries + style modifier
+            sdxl_prompts = [build_image_prompt(q, topic, tone) for q in queries]
+
         try:
             img_dir = self.project_dir / "assets" / "raw" / "image"
             sdxl = LocalSDXLClient(output_dir=img_dir)
@@ -125,19 +183,33 @@ class ResearchModule:
                 TextColumn("[dim]{task.completed}/{task.total} prompts[/dim]"),
                 transient=True,
             ) as progress:
-                task = progress.add_task("", total=len(queries))
-                for q in queries:
-                    prompt = build_image_prompt(q, topic, tone)
-                    ai_assets = sdxl.generate(prompt, num_images=images_per_query)
+                task = progress.add_task("", total=len(sdxl_prompts))
+                for prompt in sdxl_prompts:
+                    ai_assets = sdxl.generate(prompt, num_images=images_per_query, num_steps=num_steps)
                     _add(ai_assets)
                     total_generated += len(ai_assets)
-                    logger.debug("SDXL: %d images for %r", len(ai_assets), q)
+                    logger.debug("SDXL: %d images for %r", len(ai_assets), prompt[:60])
                     progress.advance(task)
             logger.info("SDXL: generated %d AI images total", total_generated)
         except RuntimeError as e:
             logger.warning("SDXL skipped — %s", e)
         except Exception as e:
             logger.warning("SDXL generation failed: %s", e)
+
+        # Re-register any SDXL images already on disk from a previous run.
+        # This ensures orphaned images are picked up even when SDXL is skipped.
+        img_dir = self.project_dir / "assets" / "raw" / "image"
+        existing_imgs = [p for p in img_dir.glob("sdxl_*.jpg") if p.stat().st_size > 1000]
+        if existing_imgs:
+            logger.info("SDXL: found %d existing images on disk — re-registering", len(existing_imgs))
+            for p in existing_imgs:
+                orphan = Asset(
+                    id=p.stem,
+                    type=AssetType.IMAGE,
+                    source=AssetSource.GENERATED,
+                    local_path=str(p),
+                )
+                _add([orphan])
 
         logger.info("Found %d unique assets total; starting downloads", len(all_assets))
 
@@ -179,29 +251,42 @@ class ResearchModule:
         """
         queries: list[str] = []
 
-        # 1. Load search_keywords and image_search_queries from production_plan.json if present
+        # 1. Load sdxl_visual_prompts and search_keywords from production_plan.json
+        #    sdxl_visual_prompts are rich camera-ready descriptions → best SDXL input
+        #    search_keywords are fallback if visual prompts not present
         plan_path = self.project_dir / "production_plan.json"
         if plan_path.exists():
             try:
                 plan_data = json.loads(plan_path.read_text())
-                # Pull AI Director search_keywords (highest priority)
-                plan_keywords = [
-                    kw.strip() for kw in plan_data.get("search_keywords", [])
-                    if kw.strip()
+
+                # HIGHEST PRIORITY: rich visual prompts designed for SDXL
+                visual_prompts = [
+                    p.strip() for p in plan_data.get("sdxl_visual_prompts", [])
+                    if p.strip()
                 ]
-                if plan_keywords:
-                    queries = plan_keywords[:4]
-                    logger.info("Using %d AI Director keywords from production_plan.json", len(queries))
+                if visual_prompts:
+                    queries = visual_prompts[:6]
+                    logger.info(
+                        "Using %d SDXL visual prompts from production_plan.json", len(queries)
+                    )
+                else:
+                    # Fallback: plain search_keywords from AI Director
+                    plan_keywords = [
+                        kw.strip() for kw in plan_data.get("search_keywords", [])
+                        if kw.strip()
+                    ]
+                    if plan_keywords:
+                        queries = plan_keywords[:4]
+                        logger.info(
+                            "Using %d AI Director keywords from production_plan.json", len(queries)
+                        )
+
                 # Also pull image_search_queries if present
                 plan_queries = plan_data.get("image_search_queries", [])
                 for q in plan_queries:
                     q = q.strip()
                     if q and q not in queries:
                         queries.append(q)
-                if plan_queries:
-                    logger.info(
-                        "Loaded %d image_search_queries from production_plan.json", len(plan_queries)
-                    )
             except Exception as e:
                 logger.warning("Could not read production_plan.json for keywords: %s", e)
 
@@ -381,13 +466,18 @@ def _topic_to_queries(topic: str) -> list[str]:
     """Derive 2-3 specific search queries from the topic string.
 
     Strategy:
-    - Extract country/city names for location-specific searches
+    - Strip question words (what, how, why, is, are, does, etc.)
     - Remove stop words and short words to get content nouns
     - Build focused compound queries
     """
-    # Common stop words to filter
+    # Common stop words to filter — includes question words so
+    # "What is Vibe Coding" → ["Vibe", "Coding"] not ["What", "Vibe"]
     _STOPS = {
         "the", "a", "an", "of", "in", "on", "at", "to", "for", "and", "or",
+        # question/linking words
+        "what", "how", "why", "when", "where", "who", "which",
+        "is", "are", "was", "were", "does", "did", "will", "can",
+        "its", "this", "that", "with", "from", "into", "about",
         "but", "is", "are", "was", "were", "be", "been", "being", "have",
         "has", "had", "do", "does", "did", "will", "would", "could", "should",
         "may", "might", "shall", "can", "about", "with", "from", "by", "as",

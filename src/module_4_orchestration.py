@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+from collections import deque
 from pathlib import Path
 from typing import Optional
 
@@ -34,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 # Audio levels
 _VOICEOVER_VOLUME = 1.0
-_MUSIC_VOLUME = 0.06
+_MUSIC_VOLUME = 0.25
 _SFX_VOLUME = 0.4
 
 # Visual cut cadence: each scene is at most this many seconds before switching asset.
@@ -96,8 +97,10 @@ class OrchestrationModule:
 
         voiceover_tracks = self._build_voiceover_tracks(script)
         # Use actual voiceover duration so video length matches the audio
-        total_duration = self._voiceover_duration(script) or script.duration_sec
-        scenes = self.build_timeline(script, assets, total_duration=total_duration, plan=plan)
+        # Add 4s title card + 3s outro card
+        vo_duration = self._voiceover_duration(script) or script.duration_sec
+        total_duration = vo_duration + 4.0 + 3.0
+        scenes = self.build_timeline(script, assets, total_duration=vo_duration, plan=plan)
         background_music = self._find_background_music(assets)
 
         meta = self._load_project_meta()
@@ -187,9 +190,20 @@ class OrchestrationModule:
             if a.type in (AssetType.VIDEO, AssetType.IMAGE) and a.local_path
         ]
 
-        # Separate pools for alternation — video on even clips, image on odd
-        video_pool = [a for a in visual_assets if a.type == AssetType.VIDEO]
-        image_pool = [a for a in visual_assets if a.type == AssetType.IMAGE]
+        # Separate pools for alternation — video on even clips, image on odd.
+        # Sort by quality descending so the first rotation cycle shows best assets.
+        # Use deque for O(1) round-robin: rotate(-1) after each use so every asset
+        # is shown once before any asset repeats.
+        video_pool = sorted(
+            [a for a in visual_assets if a.type == AssetType.VIDEO],
+            key=lambda a: -a.quality_score,
+        )
+        image_pool = sorted(
+            [a for a in visual_assets if a.type == AssetType.IMAGE],
+            key=lambda a: -a.quality_score,
+        )
+        video_deque: deque = deque(video_pool)
+        image_deque: deque = deque(image_pool)
 
         # Distribute total_duration proportionally across segments if provided
         script_total = sum(s.duration_sec for s in script.segments) or 1.0
@@ -211,10 +225,53 @@ class OrchestrationModule:
             for i, s in enumerate(script.segments)
         )
 
+        # Mood → color grade mapping for per-scene grading
+        _MOOD_GRADE: dict[str, ColorGrade] = {
+            "dark": ColorGrade.DARK_MYSTERIOUS,
+            "mysterious": ColorGrade.DARK_MYSTERIOUS,
+            "horror": ColorGrade.DARK_MYSTERIOUS,
+            "dramatic": ColorGrade.DRAMATIC,
+            "suspenseful": ColorGrade.DRAMATIC,
+            "educational": ColorGrade.DOCUMENTARY,
+            "neutral": ColorGrade.DOCUMENTARY,
+            "uplifting": ColorGrade.CINEMATIC_WARM,
+            "melancholic": ColorGrade.DRAMATIC,
+        }
+
+        # Genre → prefer cuts vs dissolves
+        fast_genres = {"thriller", "action", "horror"}
+        use_fast_cuts = genre in fast_genres
+
         scenes: list[Scene] = []
         cursor = 0.0
         scene_id = 0
         clip_counter = 0  # increments per clip; even → video, odd → image
+
+        # Track cumulative VO timing for caption sync
+        # VO starts after title card; each segment plays back-to-back
+        _TITLE_DUR = 4.0
+        vo_cursor = _TITLE_DUR  # where the next segment's VO begins in the timeline
+
+        # Prepend title card scene (4s)
+        title_card = Scene(
+            id=0,
+            segment_id=0,
+            asset_id="title_card",
+            asset_path="",
+            start_time=0.0,
+            end_time=_TITLE_DUR,
+            duration_sec=_TITLE_DUR,
+            transition_in=TransitionType.FADE_IN,
+            transition_out=TransitionType.DISSOLVE,
+            color_grade=self._plan_color_grade(plan) or ColorGrade.DARK_MYSTERIOUS,
+            text_overlays=[],  # title card renders its own styled text
+            is_title_card=True,
+            caption_text=script.topic,
+        )
+        scenes.append(title_card)
+        cursor = _TITLE_DUR
+
+        prev_segment_id = None
 
         for seg_idx, segment in enumerate(script.segments):
             seg_dur = round(segment.duration_sec * scale, 3)
@@ -223,37 +280,66 @@ class OrchestrationModule:
             n_clips = max(1, round(seg_dur / _clip_target(seg_idx)))
             clip_dur = round(seg_dur / n_clips, 3)
 
-            # Color grade is constant across sub-clips of the same segment
+            # Per-scene color grade: prefer mood-based grade, fall back to plan grade
             plan_grade = self._plan_color_grade(plan)
-            grade = plan_grade if plan_grade is not None else self.assign_color_grade(
-                Mood(segment.mood_tags[0]) if segment.mood_tags and _is_valid_mood(segment.mood_tags[0]) else script.mood
-            )
+            mood_key = segment.mood_tags[0].lower() if segment.mood_tags and _is_valid_mood(segment.mood_tags[0]) else ""
+            grade = _MOOD_GRADE.get(mood_key) or plan_grade or self.assign_color_grade(script.mood)
 
             overlays = self._build_text_overlays(segment)
+
+            # Caption timing: sync to actual VO timing, not scene visual timing
+            seg_vo_dur = segment.voiceover_duration_sec or seg_dur
+            seg_text = (segment.text or "").strip()
+            seg_words = seg_text.split()
+            words_per_clip = max(1, len(seg_words) // n_clips) if seg_words else 0
 
             for clip_idx in range(n_clips):
                 scene_id += 1
 
-                # Alternate: even clip_counter → video, odd → image (fall back if pool empty)
+                # Alternate: even clip_counter → video, odd → image.
                 prefer_video = (clip_counter % 2 == 0)
-                pool = (video_pool if prefer_video else image_pool) or visual_assets
-                if not pool:
+                if prefer_video and video_deque:
+                    asset = video_deque[0]
+                    video_deque.rotate(-1)
+                elif image_deque:
+                    asset = image_deque[0]
+                    image_deque.rotate(-1)
+                elif video_deque:
+                    asset = video_deque[0]
+                    video_deque.rotate(-1)
+                elif visual_assets:
+                    asset = visual_assets[clip_counter % len(visual_assets)]
+                else:
                     logger.error("No visual assets available — skipping clip %d", scene_id)
                     clip_counter += 1
                     cursor += clip_dur
                     continue
 
-                asset = self.match_asset_to_segment(segment, pool)
-                if asset is None:
-                    asset = pool[0]
+                is_last = (seg_idx == len(script.segments) - 1 and clip_idx == n_clips - 1)
 
-                is_first = (scene_id == 1)
-                is_last = (scene_id == total_clips)
-                t_in = TransitionType.FADE_IN if is_first else TransitionType.DISSOLVE
+                # Contextual transition: CUT within segment, DISSOLVE across segments
+                if scene_id == 1:
+                    t_in = TransitionType.DISSOLVE  # after title card
+                elif segment.id == prev_segment_id and use_fast_cuts:
+                    t_in = TransitionType.CUT
+                elif segment.id != prev_segment_id:
+                    t_in = TransitionType.DISSOLVE
+                else:
+                    t_in = TransitionType.CROSSFADE if not use_fast_cuts else TransitionType.DISSOLVE
                 t_out = TransitionType.FADE_OUT if is_last else TransitionType.DISSOLVE
 
                 # Only show text overlay on the first clip of each segment
                 clip_overlays = overlays if clip_idx == 0 else []
+
+                # Caption text + VO-synced timing for this clip
+                w_start = clip_idx * words_per_clip
+                w_end = len(seg_words) if clip_idx == n_clips - 1 else (clip_idx + 1) * words_per_clip
+                clip_caption = " ".join(seg_words[w_start:w_end]) if words_per_clip > 0 else ""
+
+                # VO-synced timing: distribute VO duration proportionally across clips
+                vo_clip_dur = seg_vo_dur / n_clips
+                cap_start = vo_cursor + clip_idx * vo_clip_dur
+                cap_end = vo_cursor + (clip_idx + 1) * vo_clip_dur
 
                 scene = Scene(
                     id=scene_id,
@@ -268,13 +354,47 @@ class OrchestrationModule:
                     color_grade=grade,
                     text_overlays=clip_overlays,
                     voiceover=None,
+                    caption_text=clip_caption,
+                    caption_start_sec=cap_start,
+                    caption_end_sec=cap_end,
                 )
                 scenes.append(scene)
                 cursor += clip_dur
                 clip_counter += 1
+                prev_segment_id = segment.id
+
+            # Advance VO cursor by the actual voiceover duration for this segment
+            vo_cursor += seg_vo_dur
 
         # Post-processing: dedup + temperature smoothing + coherence scoring
-        scenes, asset_map = self._post_process_timeline(scenes, script.segments, visual_assets)
+        content_scenes = [s for s in scenes if not getattr(s, "is_title_card", False)]
+        content_scenes, asset_map = self._post_process_timeline(content_scenes, script.segments, visual_assets)
+
+        # Append outro card (3s)
+        _OUTRO_DUR = 3.0
+        # Use the last segment's outro text or a default
+        outro_text = script.topic
+        for seg in reversed(script.segments):
+            if seg.type and seg.type.value == "outro" and seg.text:
+                outro_text = seg.text.split(".")[0].strip()  # first sentence
+                break
+        outro_card = Scene(
+            id=scene_id + 1,
+            segment_id=0,
+            asset_id="outro_card",
+            asset_path="",
+            start_time=cursor,
+            end_time=cursor + _OUTRO_DUR,
+            duration_sec=_OUTRO_DUR,
+            transition_in=TransitionType.DISSOLVE,
+            transition_out=TransitionType.FADE_OUT,
+            color_grade=self._plan_color_grade(plan) or ColorGrade.DARK_MYSTERIOUS,
+            is_outro_card=True,
+            caption_text=outro_text,
+        )
+
+        title_scenes = [s for s in scenes if getattr(s, "is_title_card", False)]
+        scenes = title_scenes + content_scenes + [outro_card]
 
         return scenes
 
@@ -320,16 +440,17 @@ class OrchestrationModule:
     # Story 4.4 — Audio plan
     # ------------------------------------------------------------------
 
+    _TITLE_CARD_DUR = 4.0  # must match build_timeline title card duration
+
     def _build_voiceover_tracks(self, script: Script) -> list[AudioTrack]:
         # Use the combined voiceover.wav produced by module 3 as a single track.
-        # Using individual segment files caused all segments to overlap at t=0
-        # because _mix_audio does not honour start_time offsets.
+        # VO starts after the title card so narration aligns with content scenes.
         combined = script.total_voiceover_path
         if combined and Path(combined).exists():
             return [AudioTrack(
                 asset_id="vo_combined",
                 local_path=combined,
-                start_time=0.0,
+                start_time=self._TITLE_CARD_DUR,
                 volume=_VOICEOVER_VOLUME,
             )]
         # Fallback: return first available segment path (rare edge-case).

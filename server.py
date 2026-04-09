@@ -1,18 +1,21 @@
+#!/opt/homebrew/bin/python3
 """
 ScriptToReel Web Server — Flask backend for the dashboard UI.
 
 Endpoints:
-  POST /api/generate       Start a new video generation job
-  GET  /api/status/<id>    Poll pipeline status (SSE stream)
-  GET  /api/projects       List all projects
-  GET  /api/video/<id>     Download the final MP4
-  GET  /                   Serve dashboard.html
+  POST   /api/generate          Start a new video generation job
+  GET    /api/status/<id>       Poll pipeline status (SSE stream)
+  GET    /api/projects          List all projects
+  DELETE /api/projects/<id>     Delete a project and all its files
+  GET    /api/video/<id>        Download the final MP4
+  GET    /                      Serve dashboard.html
 """
 from __future__ import annotations
 
 import json
 import logging
 import queue
+import shutil
 import subprocess
 import sys
 import threading
@@ -164,6 +167,31 @@ def status_stream(project_id):
 
     return Response(generate_events(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.route("/api/projects/<project_id>", methods=["DELETE"])
+def delete_project(project_id: str):
+    """Delete a project directory and all its assets/output files."""
+    # Sanitise: reject any path traversal attempts
+    if ".." in project_id or "/" in project_id:
+        return jsonify({"error": "invalid project_id"}), 400
+
+    project_dir = ROOT / "projects" / project_id
+    if not project_dir.exists():
+        return jsonify({"error": "project not found"}), 404
+
+    try:
+        shutil.rmtree(project_dir)
+    except Exception as exc:
+        logger.error("Failed to delete project %s: %s", project_id, exc)
+        return jsonify({"error": str(exc)}), 500
+
+    # Remove from in-memory job registry if present
+    with _jobs_lock:
+        _jobs.pop(project_id, None)
+
+    logger.info("Deleted project %s", project_id)
+    return jsonify({"deleted": project_id})
 
 
 @app.route("/api/video/<project_id>")

@@ -19,6 +19,7 @@ from typing import Optional
 import requests
 
 from src.utils.config_loader import load_api_keys, load_ollama_prompts
+from src.utils.llm_client import call_llm
 from src.utils.json_schemas import (
     ColorGrade,
     Mood,
@@ -82,8 +83,6 @@ class AIDirector:
     def __init__(self, project_dir: Path, api_keys: Optional[dict] = None):
         self.project_dir = Path(project_dir)
         self.api_keys = api_keys if api_keys is not None else load_api_keys()
-        self.ollama_url = self.api_keys.get("OLLAMA_BASE_URL", "http://localhost:11434")
-        self.ollama_model = self.api_keys.get("OLLAMA_MODEL", "llama3.2")
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -113,68 +112,18 @@ class AIDirector:
             duration_sec=duration_sec,
         )
 
-        use_openrouter = self.api_keys.get("USE_OPENROUTER", "").lower() == "true"
-        or_key = self.api_keys.get("OPENROUTER_API_KEY", "")
-        or_model = self.api_keys.get("OPENROUTER_MODEL", "deepseek/deepseek-chat")
-
         last_error: Exception = Exception("Unknown LLM error")
         for attempt in range(_MAX_LLM_RETRIES):
             try:
-                if use_openrouter and or_key:
-                    raw = self._call_openrouter_plan(system_prompt, user_prompt, or_key, or_model)
-                else:
-                    raw = self._call_ollama_plan(system_prompt, user_prompt)
+                raw = call_llm(system_prompt, user_prompt, self.api_keys, temperature=0.6)
                 return self._parse_plan(raw, topic, duration_sec)
             except (json.JSONDecodeError, ValueError, KeyError) as e:
                 last_error = e
                 logger.warning("AI Director attempt %d failed: %s", attempt + 1, e)
                 continue
 
-        # Fallback: return a sensible default plan so --init never hard-fails
         logger.warning("AI Director LLM failed after %d attempts; using fallback plan", _MAX_LLM_RETRIES)
         return self._fallback_plan(topic, duration_sec)
-
-    def _call_ollama_plan(self, system_prompt: str, user_prompt: str) -> str:
-        try:
-            resp = requests.post(
-                f"{self.ollama_url}/api/generate",
-                json={
-                    "model": self.ollama_model,
-                    "prompt": f"{system_prompt}\n\n{user_prompt}",
-                    "stream": False,
-                    "options": {"temperature": 0.6, "num_predict": -1},
-                },
-                timeout=180,
-            )
-            resp.raise_for_status()
-            return resp.json().get("response", "")
-        except requests.ConnectionError as e:
-            raise RuntimeError(f"Cannot connect to Ollama at {self.ollama_url}") from e
-
-    def _call_openrouter_plan(
-        self, system_prompt: str, user_prompt: str, api_key: str, model: str
-    ) -> str:
-        resp = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://scripttoreel.local",
-                "X-Title": "ScriptToReel",
-            },
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                "temperature": 0.6,
-                "max_tokens": 2048,
-            },
-            timeout=60,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
 
     def _parse_plan(self, raw_text: str, topic: str, duration_sec: int) -> ProductionPlan:
         text = re.sub(r"```(?:json)?\s*", "", raw_text).strip()
@@ -265,12 +214,6 @@ class ScriptDirector:
     def __init__(self, api_keys: Optional[dict] = None):
         self.api_keys = api_keys if api_keys is not None else load_api_keys()
         self._prompts = load_ollama_prompts()
-        self.ollama_url = self.api_keys.get("OLLAMA_BASE_URL", "http://localhost:11434")
-        self.ollama_model = self.api_keys.get("OLLAMA_MODEL", "llama3.2")
-        # Prefer a higher-tier model for the director pass
-        self.director_model = self.api_keys.get(
-            "DIRECTOR_MODEL", "anthropic/claude-sonnet-4-5"
-        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -312,57 +255,8 @@ class ScriptDirector:
             f"the revised JSON with the identical structure:\n\n{script_json}"
         )
 
-        or_key = self.api_keys.get("OPENROUTER_API_KEY", "")
-        if or_key:
-            raw = self._call_openrouter(system_prompt, user_prompt, or_key)
-        else:
-            raw = self._call_ollama(system_prompt, user_prompt)
-
+        raw = call_llm(system_prompt, user_prompt, self.api_keys, temperature=0.4, max_tokens=6000)
         return self._parse_revised_script(raw, script)
-
-    def _call_openrouter(
-        self, system_prompt: str, user_prompt: str, api_key: str
-    ) -> str:
-        logger.info("ScriptDirector: calling OpenRouter model %s", self.director_model)
-        resp = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://scripttoreel.local",
-                "X-Title": "ScriptToReel-Director",
-            },
-            json={
-                "model": self.director_model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                "temperature": 0.4,
-                "max_tokens": 6000,
-            },
-            timeout=180,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
-
-    def _call_ollama(self, system_prompt: str, user_prompt: str) -> str:
-        logger.info(
-            "ScriptDirector: OpenRouter key absent — using Ollama (%s)",
-            self.ollama_model,
-        )
-        resp = requests.post(
-            f"{self.ollama_url}/api/generate",
-            json={
-                "model": self.ollama_model,
-                "prompt": f"{system_prompt}\n\n{user_prompt}",
-                "stream": False,
-                "options": {"temperature": 0.4, "num_predict": -1},
-            },
-            timeout=300,
-        )
-        resp.raise_for_status()
-        return resp.json().get("response", "")
 
     def _parse_revised_script(self, raw_text: str, original: Script) -> Script:
         """Parse the director's JSON response back into a Script, preserving

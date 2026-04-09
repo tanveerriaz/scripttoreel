@@ -28,6 +28,15 @@ from rich import box
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+if sys.version_info < (3, 11):
+    print(
+        f"Error: Python {sys.version_info.major}.{sys.version_info.minor} detected. "
+        "ScriptToReel requires Python 3.11+ (torch/SDXL/Kokoro need it).\n"
+        "Run with:  /opt/homebrew/bin/python3 main.py"
+    )
+    sys.exit(1)
+
+
 # Ensure Homebrew binaries are on PATH so ffmpeg/ffprobe are always found on macOS
 _HOMEBREW_BIN = "/opt/homebrew/bin"
 if Path(_HOMEBREW_BIN).is_dir() and _HOMEBREW_BIN not in os.environ.get("PATH", ""):

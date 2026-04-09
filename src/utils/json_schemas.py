@@ -228,6 +228,9 @@ class ScriptSegment(BaseModel):
     transitions: SegmentTransitions = Field(default_factory=SegmentTransitions)
     text_overlay: TextOverlay = Field(default_factory=TextOverlay)
 
+    # AI image prompt — scene-specific SDXL prompt for cinematic image generation
+    sdxl_prompt: Optional[str] = None
+
     # Voice casting — edge-tts voice name (e.g. "en-US-GuyNeural")
     voice: Optional[str] = None
 
@@ -287,6 +290,11 @@ class Scene(BaseModel):
     text_overlays: list[TextOverlay] = Field(default_factory=list)
     voiceover: Optional[AudioTrack] = None
     sfx_tracks: list[AudioTrack] = Field(default_factory=list)
+    is_title_card: bool = False
+    is_outro_card: bool = False
+    caption_text: Optional[str] = None
+    caption_start_sec: float = 0.0
+    caption_end_sec: Optional[float] = None
 
 
 class Orchestration(BaseModel):
@@ -363,6 +371,7 @@ class ProductionPlan(BaseModel):
     avoid_list: list[str] = Field(default_factory=list)
     script_guidance: str = ""
     hook_style: Optional[str] = None  # One of 12 hook patterns, or None for auto-select
+    sdxl_visual_prompts: list[str] = Field(default_factory=list)
     generated_at: str = ""
 
 

@@ -22,6 +22,7 @@ from typing import Optional
 import requests
 
 from src.utils.config_loader import load_api_keys
+from src.utils.llm_client import call_llm
 from src.utils.json_schemas import ProductionPlan, ToneStyle, VisualStyleChoice
 
 logger = logging.getLogger(__name__)
@@ -70,8 +71,6 @@ class ProductionPlanModule:
     def __init__(self, project_dir: Path, api_keys: Optional[dict] = None):
         self.project_dir = Path(project_dir)
         self.api_keys = api_keys if api_keys is not None else load_api_keys()
-        self.ollama_url = self.api_keys.get("OLLAMA_BASE_URL", "http://localhost:11434")
-        self.ollama_model = self.api_keys.get("OLLAMA_MODEL", "llama3.2")
 
     @property
     def plan_path(self) -> Path:
@@ -109,58 +108,17 @@ class ProductionPlanModule:
 
     def _call_llm(self, topic: str, duration_min: float) -> ProductionPlan:
         user_prompt = _USER_TEMPLATE.format(topic=topic, duration_min=duration_min)
-
-        use_openrouter = self.api_keys.get("USE_OPENROUTER", "").lower() == "true"
-        or_key = self.api_keys.get("OPENROUTER_API_KEY", "")
-        or_model = self.api_keys.get("OPENROUTER_MODEL", "deepseek/deepseek-chat")
-
-        if use_openrouter and or_key:
-            raw = self._call_openrouter(_SYSTEM_PROMPT, user_prompt, or_key, or_model)
-        else:
-            raw = self._call_ollama(_SYSTEM_PROMPT, user_prompt)
-
+        raw = call_llm(_SYSTEM_PROMPT, user_prompt, self.api_keys)
         return self._parse_plan(raw, topic, duration_min)
 
-    def _call_openrouter(
-        self, system_prompt: str, user_prompt: str, api_key: str, model: str
-    ) -> str:
-        logger.info("Production plan: using OpenRouter model %s", model)
-        resp = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://scripttoreel.local",
-                "X-Title": "ScriptToReel",
-            },
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                "temperature": 0.7,
-                "max_tokens": 1024,
-            },
-            timeout=60,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
-
-    def _call_ollama(self, system_prompt: str, user_prompt: str) -> str:
-        logger.info("Production plan: using Ollama model %s", self.ollama_model)
-        resp = requests.post(
-            f"{self.ollama_url}/api/generate",
-            json={
-                "model": self.ollama_model,
-                "prompt": f"{system_prompt}\n\n{user_prompt}",
-                "stream": False,
-                "options": {"temperature": 0.7, "num_predict": 1024},
-            },
-            timeout=120,
-        )
-        resp.raise_for_status()
-        return resp.json().get("response", "")
+    # Tone → preferred hook patterns (auto-select when LLM doesn't pick one)
+    _TONE_HOOK_MAP: dict[str, list[str]] = {
+        "documentary": ["stat", "curiosity_gap"],
+        "dramatic":    ["controversy", "prediction"],
+        "cinematic":   ["story", "contrast"],
+        "uplifting":   ["empathy", "authority"],
+        "casual":      ["question", "fomo"],
+    }
 
     def _parse_plan(
         self, raw: str, topic: str, duration_min: float
@@ -185,6 +143,14 @@ class ProductionPlanModule:
         valid_styles = {v.value for v in VisualStyleChoice}
         if data.get("visual_style", "") not in valid_styles:
             data["visual_style"] = "documentary"
+
+        # Auto-select hook_style based on tone if LLM didn't pick one
+        if not data.get("hook_style"):
+            tone = data.get("tone", "documentary")
+            candidates = self._TONE_HOOK_MAP.get(tone, ["question", "curiosity_gap"])
+            import random
+            data["hook_style"] = random.choice(candidates)
+            logger.info("Auto-selected hook_style=%r for tone=%r", data["hook_style"], tone)
 
         return ProductionPlan(**data)
 

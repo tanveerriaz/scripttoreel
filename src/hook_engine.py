@@ -19,6 +19,7 @@ from typing import Optional
 import requests
 
 from src.utils.config_loader import load_api_keys, load_ollama_prompts
+from src.utils.llm_client import call_llm
 
 logger = logging.getLogger(__name__)
 
@@ -108,8 +109,6 @@ class HookEngine:
 
     def __init__(self, api_keys: Optional[dict] = None):
         self.api_keys = api_keys if api_keys is not None else load_api_keys()
-        self.ollama_url = self.api_keys.get("OLLAMA_BASE_URL", "http://localhost:11434")
-        self.ollama_model = self.api_keys.get("OLLAMA_MODEL", "llama3.2")
 
     # ------------------------------------------------------------------
     # Public API
@@ -188,53 +187,8 @@ class HookEngine:
             pattern_constraint=pattern_constraint,
         )
 
-        use_openrouter = self.api_keys.get("USE_OPENROUTER", "").lower() == "true"
-        or_key = self.api_keys.get("OPENROUTER_API_KEY", "")
-        or_model = self.api_keys.get("OPENROUTER_MODEL", "deepseek/deepseek-chat")
-
-        if use_openrouter and or_key:
-            raw = self._call_openrouter(system_prompt, user_prompt, or_key, or_model)
-        else:
-            raw = self._call_ollama(system_prompt, user_prompt)
-
+        raw = call_llm(system_prompt, user_prompt, self.api_keys, temperature=0.8, max_tokens=1024)
         return self._parse_hooks_json(raw, topic, tone)
-
-    def _call_openrouter(self, system: str, user: str, api_key: str, model: str) -> str:
-        resp = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://scripttoreel.local",
-                "X-Title": "ScriptToReel",
-            },
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                "temperature": 0.8,
-                "max_tokens": 1024,
-            },
-            timeout=60,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
-
-    def _call_ollama(self, system: str, user: str) -> str:
-        resp = requests.post(
-            f"{self.ollama_url}/api/generate",
-            json={
-                "model": self.ollama_model,
-                "prompt": f"{system}\n\n{user}",
-                "stream": False,
-                "options": {"temperature": 0.8, "num_predict": 512},
-            },
-            timeout=60,
-        )
-        resp.raise_for_status()
-        return resp.json().get("response", "")
 
     def _parse_hooks_json(self, raw: str, topic: str, tone: str) -> list[dict]:
         """Parse LLM JSON response into list of hook dicts."""
