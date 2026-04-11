@@ -1,6 +1,7 @@
 <div align="center">
 
-<img src="assets/branding/scripttoreel-logo.svg" alt="ScriptToReel" width="200" height="200" />
+<!-- PNG: GitHub README often blocks or drops huge filter+embedded-raster SVGs; keep in sync via rsvg-convert from scripttoreel-logo.svg -->
+<img src="assets/docs/readme-logo.png" alt="ScriptToReel" width="200" height="200" />
 
 # ScriptToReel
 
