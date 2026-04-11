@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/branding/app-icon.svg" alt="ScriptToReel" width="96" height="96" />
+<img src="assets/branding/scripttoreel-logo.svg" alt="ScriptToReel" width="200" height="200" />
 
 # ScriptToReel
 
@@ -25,7 +25,7 @@
 
 **New here?** Install prerequisites → copy `config/api_keys.env.example` → run the [First-time checklist](#first-time-checklist) below.
 
-**Branding:** App icon is `assets/branding/app-icon.svg` (public domain film reel from [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Movie-reel.svg); see `assets/branding/README.md`).
+**Branding:** Primary lockup `scripttoreel-logo.svg` (Gemini export); vector mark and app icon (`mark.svg`, `app-icon.svg`); stacked wordmark and light/dark / monochrome variants in `assets/branding/`. Legacy Wikimedia reel: `app-icon-legacy.svg`. See `assets/branding/README.md`.
 
 ---
 

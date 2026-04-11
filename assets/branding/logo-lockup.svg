@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Raster lockup. Note: when this SVG is used as <img src="...">, browsers do not
+  load linked rasters; use logo-lockup-1024.png in HTML instead, or inline this SVG in HTML.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1024 558" width="1024" height="558" role="img" aria-label="ScriptToReel logo">
+  <image width="1024" height="558" preserveAspectRatio="xMidYMid meet" xlink:href="/assets/branding/logo-lockup-1024.png" href="/assets/branding/logo-lockup-1024.png"/>
+</svg>

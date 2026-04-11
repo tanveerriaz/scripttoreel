@@ -4,6 +4,7 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
 <title>ScriptToReel | AI Video Generation</title>
+<link rel="icon" href="/assets/branding/mark.svg" type="image/svg+xml"/>
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
@@ -18,9 +19,9 @@ tailwind.config = {
         "surface-container": "#1a1919",
         "surface-high": "#201f1f",
         "surface-highest": "#262626",
-        "accent": "#cffc00",
-        "accent-dim": "#a8cc00",
-        "accent-text": "#f4ffc8",
+        "accent": "#CCFF00",
+        "accent-dim": "#9ED900",
+        "accent-text": "#EFFF99",
         "on-surface": "#ffffff",
         "muted": "#777575",
         "muted-dim": "#494847",
@@ -44,9 +45,25 @@ body { font-family: 'Inter', sans-serif; }
 
 <!-- Sidebar -->
 <aside class="h-screen w-60 fixed left-0 top-0 bg-black/90 backdrop-blur-2xl shadow-2xl shadow-black flex flex-col py-8 z-50">
-  <div class="px-7 mb-10">
-    <h1 class="text-xl font-black italic tracking-tighter text-white">ScriptToReel</h1>
-    <p class="text-[10px] text-muted mt-1 font-bold uppercase tracking-widest">AI Video Generator</p>
+  <div class="px-5 mb-7 flex min-w-0 flex-row items-start gap-3">
+    <!-- Mark + wordmark: brand colors match Tailwind accent (#CCFF00) and nav type scale. -->
+    <img
+      src="/assets/branding/scripttoreel-logo.svg"
+      alt=""
+      width="132"
+      height="132"
+      class="block h-auto max-h-10 w-auto max-w-[132px] shrink-0 object-contain object-left opacity-[0.92] hover:opacity-100 transition-opacity"
+      decoding="async"
+      fetchpriority="high"
+    />
+    <div class="min-w-0 flex-1 border-l-2 border-accent/40 pl-3 pt-0.5">
+      <h1 class="text-base font-bold leading-tight tracking-tight text-white">
+        <span class="text-white">ScriptTo</span><span class="text-accent">Reel</span>
+      </h1>
+      <p class="mt-1 text-[10px] font-bold uppercase tracking-[0.2em] text-muted leading-snug">
+        AI Video Generator
+      </p>
+    </div>
   </div>
   <nav class="flex-1 space-y-1">
     <div id="navDashboard" onclick="setPage('dashboard')" class="bg-accent text-black rounded-full mx-3 py-2.5 px-5 flex items-center space-x-3 cursor-pointer transition-all">
@@ -102,7 +119,7 @@ body { font-family: 'Inter', sans-serif; }
                 <span class="material-symbols-outlined absolute right-4 top-5 text-muted-dim">search</span>
               </div>
             </div>
-            <button id="searchBtn" onclick="searchTopics()" class="w-full bg-accent text-black font-black py-4 rounded-full text-base uppercase tracking-tight hover:shadow-[0_0_40px_rgba(207,252,0,0.3)] transition-all active:scale-[0.98]">
+            <button id="searchBtn" onclick="searchTopics()" class="w-full bg-accent text-black font-black py-4 rounded-full text-base uppercase tracking-tight hover:shadow-[0_0_40px_rgba(204,255,0,0.35)] transition-all active:scale-[0.98]">
               Find Topics
             </button>
           </div>
@@ -179,7 +196,7 @@ body { font-family: 'Inter', sans-serif; }
               </div>
             </div>
 
-            <button id="generateBtn" onclick="startGeneration()" class="w-full bg-accent text-black font-black py-4 rounded-full text-base uppercase tracking-tight hover:shadow-[0_0_40px_rgba(207,252,0,0.3)] transition-all active:scale-[0.98]">
+            <button id="generateBtn" onclick="startGeneration()" class="w-full bg-accent text-black font-black py-4 rounded-full text-base uppercase tracking-tight hover:shadow-[0_0_40px_rgba(204,255,0,0.35)] transition-all active:scale-[0.98]">
               Generate Video
             </button>
           </div>

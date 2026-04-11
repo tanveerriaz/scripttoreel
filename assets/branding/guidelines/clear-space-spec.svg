@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 1024 master: 10 percent clear space, 102px inset, dashed guide for designers -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
+  <rect width="1024" height="1024" fill="#2a2a2a"/>
+  <rect x="102" y="102" width="820" height="820" fill="none" stroke="#CCFF00" stroke-width="2" stroke-dasharray="12 8" opacity="0.9"/>
+  <text x="512" y="80" text-anchor="middle" fill="#CCFF00" font-family="Inter, system-ui, sans-serif" font-size="22" font-weight="600">10% clear space (102px)</text>
+</svg>

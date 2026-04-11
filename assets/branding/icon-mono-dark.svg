@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Monochrome: white mark on Deep Charcoal field. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="ScriptToReel app icon monochrome dark">
+  <rect width="1024" height="1024" rx="230" ry="230" fill="#121212"/>
+  <g transform="translate(169 169) scale(1.33984375)">
+    <defs>
+      <mask id="monoDarkFilmCutouts" maskUnits="userSpaceOnUse">
+        <rect width="512" height="512" fill="white"/>
+        <rect x="246" y="168" width="50" height="118" rx="4" fill="black"/>
+        <rect x="304" y="168" width="50" height="118" rx="4" fill="black"/>
+        <rect x="362" y="168" width="50" height="118" rx="4" fill="black"/>
+        <rect x="244" y="138" width="9" height="10" rx="1" fill="black"/>
+        <rect x="259" y="138" width="9" height="10" rx="1" fill="black"/>
+        <rect x="274" y="138" width="9" height="10" rx="1" fill="black"/>
+        <rect x="289" y="138" width="9" height="10" rx="1" fill="black"/>
+        <rect x="304" y="138" width="9" height="10" rx="1" fill="black"/>
+        <rect x="319" y="138" width="9" height="10" rx="1" fill="black"/>
+        <rect x="334" y="138" width="9" height="10" rx="1" fill="black"/>
+        <rect x="349" y="138" width="9" height="10" rx="1" fill="black"/>
+        <rect x="364" y="138" width="9" height="10" rx="1" fill="black"/>
+        <rect x="379" y="138" width="9" height="10" rx="1" fill="black"/>
+        <rect x="394" y="138" width="9" height="10" rx="1" fill="black"/>
+        <rect x="409" y="138" width="9" height="10" rx="1" fill="black"/>
+        <rect x="424" y="138" width="9" height="10" rx="1" fill="black"/>
+        <rect x="244" y="306" width="9" height="10" rx="1" fill="black"/>
+        <rect x="259" y="306" width="9" height="10" rx="1" fill="black"/>
+        <rect x="274" y="306" width="9" height="10" rx="1" fill="black"/>
+        <rect x="289" y="306" width="9" height="10" rx="1" fill="black"/>
+        <rect x="304" y="306" width="9" height="10" rx="1" fill="black"/>
+        <rect x="319" y="306" width="9" height="10" rx="1" fill="black"/>
+        <rect x="334" y="306" width="9" height="10" rx="1" fill="black"/>
+        <rect x="349" y="306" width="9" height="10" rx="1" fill="black"/>
+        <rect x="364" y="306" width="9" height="10" rx="1" fill="black"/>
+        <rect x="379" y="306" width="9" height="10" rx="1" fill="black"/>
+        <rect x="394" y="306" width="9" height="10" rx="1" fill="black"/>
+        <rect x="409" y="306" width="9" height="10" rx="1" fill="black"/>
+        <rect x="424" y="306" width="9" height="10" rx="1" fill="black"/>
+      </mask>
+    </defs>
+    <g fill="#FFFFFF">
+      <rect x="28" y="166" width="56" height="16" rx="8"/>
+      <rect x="28" y="190" width="82" height="16" rx="8"/>
+      <rect x="28" y="214" width="108" height="16" rx="8"/>
+      <rect x="28" y="238" width="134" height="16" rx="8"/>
+      <rect x="28" y="262" width="160" height="16" rx="8"/>
+    </g>
+    <path fill="#FFFFFF" d="M 188 160 L 236 128 L 236 326 L 188 294 C 172 278 168 250 172 220 C 175 195 178 175 188 160 Z"/>
+    <rect fill="#FFFFFF" mask="url(#monoDarkFilmCutouts)" x="236" y="126" width="212" height="202" rx="16"/>
+  </g>
+</svg>
