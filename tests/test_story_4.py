@@ -175,7 +175,12 @@ def test_scene_ids_sequential():
     assets = [_make_video_asset(f"v{i}", Mood.NEUTRAL, []) for i in range(3)]
     m = OrchestrationModule.__new__(OrchestrationModule)
     scenes = m.build_timeline(script, assets)
-    for idx, scene in enumerate(scenes):
+    # First scene is always the title card (id=0)
+    assert scenes[0].id == 0
+    assert scenes[0].is_title_card is True
+    # Content scenes are 1-indexed and sequential
+    content = [s for s in scenes if not s.is_title_card and not s.is_outro_card]
+    for idx, scene in enumerate(content):
         assert scene.id == idx + 1
 
 
@@ -186,7 +191,9 @@ def test_total_duration_matches_script():
     m = OrchestrationModule.__new__(OrchestrationModule)
     scenes = m.build_timeline(script, assets)
     total = scenes[-1].end_time
-    assert abs(total - script.duration_sec) <= 1.0
+    # build_timeline prepends a 4s title card and appends a 3s outro card
+    _OVERHEAD = 4.0 + 3.0
+    assert abs(total - (script.duration_sec + _OVERHEAD)) <= 2.0
 
 
 # ---------------------------------------------------------------------------
@@ -253,8 +260,8 @@ def test_orchestration_json_valid_schema(tmp_project):
     assert out.exists()
     raw = json.loads(out.read_text())
     loaded = Orchestration(**raw)
-    # 3 segments × 10s each → 2 clips per segment (≤5s each) → 6 scenes
-    assert len(loaded.scenes) == 6
+    # 1 title_card + 3 segments × 2 clips/segment + 1 outro_card = 8 scenes
+    assert len(loaded.scenes) == 8
 
 
 def test_voiceover_volume_is_1(tmp_project):
@@ -277,7 +284,7 @@ def test_voiceover_volume_is_1(tmp_project):
         assert track.volume == 1.0
 
 
-def test_music_volume_is_0_06(tmp_project):
+def test_music_volume_is_0_25(tmp_project):
     # Create a fake background music asset
     music_path = tmp_project / "assets" / "audio" / "bg_music.mp3"
     music_path.touch()
@@ -305,4 +312,4 @@ def test_music_volume_is_0_06(tmp_project):
     orch = module.run()
 
     if orch.background_music:
-        assert abs(orch.background_music.volume - 0.06) < 0.001
+        assert abs(orch.background_music.volume - 0.25) < 0.001

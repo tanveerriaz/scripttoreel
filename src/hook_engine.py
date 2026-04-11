@@ -16,9 +16,7 @@ import logging
 import re
 from typing import Optional
 
-import requests
-
-from src.utils.config_loader import load_api_keys, load_ollama_prompts
+from src.utils.config_loader import load_api_keys, load_script_prompts
 from src.utils.llm_client import call_llm
 
 logger = logging.getLogger(__name__)
@@ -168,7 +166,7 @@ class HookEngine:
     ) -> list[dict]:
         """Ask the LLM to generate 3 hooks and return parsed list."""
         try:
-            prompts = load_ollama_prompts()
+            prompts = load_script_prompts()
             hook_prompts = prompts.get("hook_engine", {})
             system_prompt = hook_prompts.get("system", _DEFAULT_SYSTEM_PROMPT)
             user_template = hook_prompts.get("user_template", _DEFAULT_USER_TEMPLATE)
@@ -253,7 +251,7 @@ class HookEngine:
 
 
 # ---------------------------------------------------------------------------
-# Default LLM prompts (used if ollama_prompts.yaml has no hook_engine section)
+# Default LLM prompts (used if script_prompts.yaml has no hook_engine section)
 # ---------------------------------------------------------------------------
 
 _DEFAULT_SYSTEM_PROMPT = """\

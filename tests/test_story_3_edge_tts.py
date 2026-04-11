@@ -84,8 +84,8 @@ def test_available_voices_contains_required_voices():
     assert required.issubset(set(AVAILABLE_VOICES))
 
 
-def test_default_narrator_voice_is_guy_neural():
-    assert DEFAULT_NARRATOR_VOICE == "en-US-GuyNeural"
+def test_default_narrator_voice_is_aria_neural():
+    assert DEFAULT_NARRATOR_VOICE == "en-US-AriaNeural"
 
 
 # ---------------------------------------------------------------------------

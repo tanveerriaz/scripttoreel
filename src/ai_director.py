@@ -16,9 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-import requests
-
-from src.utils.config_loader import load_api_keys, load_ollama_prompts
+from src.utils.config_loader import load_api_keys, load_script_prompts
 from src.utils.llm_client import call_llm
 from src.utils.json_schemas import (
     ColorGrade,
@@ -101,7 +99,7 @@ class AIDirector:
     # ------------------------------------------------------------------
 
     def _generate_plan(self, topic: str, duration_min: float) -> ProductionPlan:
-        prompts = load_ollama_prompts()
+        prompts = load_script_prompts()
         director_cfg = prompts.get("ai_director", {})
         system_prompt = director_cfg.get("system", "You are an AI video director. Return JSON only.")
         user_template = director_cfg.get("user_template", "")
@@ -213,7 +211,7 @@ class ScriptDirector:
 
     def __init__(self, api_keys: Optional[dict] = None):
         self.api_keys = api_keys if api_keys is not None else load_api_keys()
-        self._prompts = load_ollama_prompts()
+        self._prompts = load_script_prompts()
 
     # ------------------------------------------------------------------
     # Public API
@@ -246,7 +244,7 @@ class ScriptDirector:
         system_prompt = self._prompts.get("script_director", {}).get("system", "")
         if not system_prompt:
             raise ValueError(
-                "script_director.system prompt missing from ollama_prompts.yaml"
+                "script_director.system prompt missing from script_prompts.yaml"
             )
 
         script_json = json.dumps(script.model_dump(), indent=2, default=str)

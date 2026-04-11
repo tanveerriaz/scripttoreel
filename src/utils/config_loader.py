@@ -15,8 +15,8 @@ def _config_dir() -> Path:
     return _ROOT / "config"
 
 
-def load_ollama_prompts() -> dict[str, Any]:
-    path = _config_dir() / "ollama_prompts.yaml"
+def load_script_prompts() -> dict[str, Any]:
+    path = _config_dir() / "script_prompts.yaml"
     with open(path) as f:
         return yaml.safe_load(f)
 
@@ -38,8 +38,6 @@ def load_api_keys(env_path: Optional[Path] = None) -> dict[str, Optional[str]]:
         "PIXABAY_API_KEY": os.environ.get("PIXABAY_API_KEY"),
         "UNSPLASH_ACCESS_KEY": os.environ.get("UNSPLASH_ACCESS_KEY"),
         "FREESOUND_API_KEY": os.environ.get("FREESOUND_API_KEY"),
-        "OLLAMA_BASE_URL": os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"),
-        "OLLAMA_MODEL": os.environ.get("OLLAMA_MODEL", "llama3.2"),
         "USE_OPENROUTER": os.environ.get("USE_OPENROUTER", ""),
         "OPENROUTER_API_KEY": os.environ.get("OPENROUTER_API_KEY"),
         "OPENROUTER_MODEL": os.environ.get("OPENROUTER_MODEL", "deepseek/deepseek-chat"),

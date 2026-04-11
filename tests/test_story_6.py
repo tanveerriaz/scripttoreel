@@ -32,7 +32,7 @@ def _make_tiny_mp4(path: Path, duration: float = 3.0, w: int = 1920, h: int = 10
     """Create a real MP4 with correct specs for validation."""
     subprocess.run([
         "ffmpeg", "-y",
-        "-f", "lavfi", "-i", f"color=c=blue:size={w}x{h}:duration={duration}:rate=30",
+        "-f", "lavfi", "-i", f"color=c=white:size={w}x{h}:duration={duration}:rate=30",
         "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=stereo:duration={duration}",
         "-c:v", "libx264", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k",

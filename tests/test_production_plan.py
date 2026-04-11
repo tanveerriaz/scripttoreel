@@ -348,7 +348,7 @@ class TestModule3UsesPlan:
             return _minimal_script_json("AI in Healthcare", 300)
 
         with patch("src.module_3_script_voiceover.call_llm", side_effect=fake_llm):
-            m.generate_script_ollama("AI in Healthcare", 5.0, plan=plan)
+            m.generate_script("AI in Healthcare", 5.0, plan=plan)
 
         # Verify the user_prompt was augmented with plan notes
         assert "user_prompt" in captured
@@ -357,13 +357,13 @@ class TestModule3UsesPlan:
         assert "ADDITIONAL PRODUCTION NOTES" in captured["user_prompt"]
 
     def test_no_plan_generates_script_normally(self, tmp_project, fake_api_keys):
-        """Without production plan, generate_script_ollama works as before."""
+        """Without production plan, generate_script works as before."""
         from src.module_3_script_voiceover import ScriptModule
         m = ScriptModule(tmp_project, api_keys=fake_api_keys)
         script_json = _minimal_script_json("Deep Ocean", 180)
 
         with patch("src.module_3_script_voiceover.call_llm", return_value=script_json):
-            script = m.generate_script_ollama("Deep Ocean", 3.0, plan=None)
+            script = m.generate_script("Deep Ocean", 3.0, plan=None)
 
         assert script.topic == "Deep Ocean"
 

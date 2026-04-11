@@ -1,9 +1,9 @@
 """
 Module 3 — Script Generation & Voiceover.
 
-1. Calls local Ollama to generate a structured script (JSON)
+1. Calls OpenRouter via `call_llm()` to generate a structured script (JSON)
 2. Parses and validates the script with Pydantic
-3. Generates per-segment WAV voiceover (edge-tts → piper → macOS `say`)
+3. Generates per-segment WAV voiceover (Kokoro-ONNX → edge-tts → piper → macOS `say`)
 4. Concatenates segments with pauses → voiceover.wav
 5. Writes script.json
 """
@@ -51,7 +51,7 @@ _KOKORO_VOICE_MAP: dict[str, str] = {
 _KOKORO_DEFAULT_VOICE = "am_adam"
 
 from src.project_manager import update_pipeline_status
-from src.utils.config_loader import load_api_keys, load_ollama_prompts
+from src.utils.config_loader import load_api_keys, load_script_prompts
 from src.utils.llm_client import call_llm
 from src.utils.json_schemas import (
     ModuleStatus,
@@ -66,10 +66,6 @@ logger = logging.getLogger(__name__)
 
 _MAX_LLM_RETRIES = 3
 _PAUSE_BETWEEN_SEGMENTS_MS = 500
-
-
-class OllamaNotAvailableError(Exception):
-    """Raised when Ollama is unreachable or returns an error."""
 
 
 class ScriptModule:
@@ -102,7 +98,7 @@ class ScriptModule:
         # Load production plan settings if available
         plan = self._load_production_plan()
 
-        script = self.generate_script_ollama(topic, duration_min, plan=plan)
+        script = self.generate_script(topic, duration_min, plan=plan)
 
         # Duration pacing check — revise script if estimated VO length is off target
         script = self._enforce_duration_pacing(script, duration_min, plan=plan)
@@ -272,14 +268,14 @@ class ScriptModule:
     # Story 3.1 — Script generation via OpenRouter
     # ------------------------------------------------------------------
 
-    def generate_script_ollama(
+    def generate_script(
         self,
         topic: str,
         duration_min: float,
         plan=None,  # Optional[ProductionPlan] — avoid circular import
     ) -> Script:
-        """Generate script via OpenRouter (claude-sonnet-4-5)."""
-        prompts = load_ollama_prompts()
+        """Generate script via OpenRouter (call_llm)."""
+        prompts = load_script_prompts()
         system_prompt = prompts["script_generation"]["system"]
         user_template = prompts["script_generation"]["user_template"]
         duration_sec = int(duration_min * 60)
@@ -612,8 +608,8 @@ class ScriptModule:
         updated_segments = []
         for seg in script.segments:
             # Use per-segment voice if explicitly set to a known voice;
-            # otherwise use DEFAULT_NARRATOR_VOICE (code-level control).
-            voice = DEFAULT_NARRATOR_VOICE
+            # otherwise fall back to script.narrator_voice, then DEFAULT_NARRATOR_VOICE.
+            voice = script.narrator_voice or DEFAULT_NARRATOR_VOICE
             if seg.voice and seg.voice in AVAILABLE_VOICES:
                 voice = seg.voice
             wav = self.generate_voiceover_segment(seg.text, seg.id, voice=voice)

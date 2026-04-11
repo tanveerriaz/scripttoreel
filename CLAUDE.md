@@ -1,6 +1,6 @@
 # ScriptToReel
 
-Local AI video generation pipeline for Mac M4 Pro. Turns a topic string into a 1080p MP4 using Ollama (LLM), edge-tts/macOS TTS, stock footage APIs, and MoviePy v2.0 + FFmpeg VideoToolbox encoding.
+Local AI video generation pipeline for Mac M4 Pro. Turns a topic string into a 1080p MP4 using OpenRouter (LLM), Kokoro/edge-tts TTS, SDXL-generated images, Freesound audio, and MoviePy v2.0 + FFmpeg VideoToolbox encoding.
 
 ## Quick Reference
 
@@ -40,9 +40,9 @@ Module 6 (Validation)     → validation_report.json
 main.py                          — Click CLI entry point
 src/
   project_manager.py             — create/load/update project.json
-  module_1_research.py           — API search + asset download (Pexels, Pixabay, Unsplash, Freesound)
+  module_1_research.py           — SDXL image generation (local) + Freesound audio search/download
   module_2_metadata.py           — ffprobe/Pillow/librosa/OpenCV metadata + quality scoring
-  module_3_script_voiceover.py   — Ollama LLM script gen + edge-tts TTS (macOS say fallback)
+  module_3_script_voiceover.py   — OpenRouter LLM script gen + Kokoro/edge-tts TTS (macOS say fallback)
                                    Includes _enhance_hook: prepends best hook from HookEngine to intro
   module_4_orchestration.py      — Asset-to-segment matching, timeline, transitions, audio mix plan
                                    Visual coherence scoring: dedup + color temperature smoothing
@@ -50,16 +50,16 @@ src/
                                    letterbox, CrossFadeIn); audio mix stays as ffmpeg subprocess
   module_6_validation.py         — 10 ffprobe checks, metadata embedding, validation report
   hook_engine.py                 — 12-pattern HookEngine (question/stat/controversy/story/…)
-                                   LLM generation via OpenRouter/Ollama + template fallback
+                                   LLM generation via OpenRouter + template fallback
   ai_director.py                 — AI-driven scene timing and transition direction
   utils/
     json_schemas.py              — All Pydantic models (Asset, Script, Scene, Orchestration, etc.)
-    api_handlers.py              — PexelsClient, PixabayClient, UnsplashClient, FreesoundClient
+    api_handlers.py              — FreesoundClient (sole external media source)
     config_loader.py             — YAML + dotenv loading
     ffmpeg_builder.py            — Fluent FFmpeg command builder (audio mixing only)
 config/
   ffmpeg_presets.yaml            — Output specs, transitions, color grades, audio levels
-  ollama_prompts.yaml            — LLM prompt templates for script gen + hook engine
+  script_prompts.yaml            — LLM prompt templates for script gen + hook engine
   api_keys.env                   — API keys (gitignored)
 ```
 
@@ -73,19 +73,18 @@ config/
 ## Config
 
 - `config/ffmpeg_presets.yaml` — output codec/bitrate/resolution, transition filters, color grade EQ values, audio volume levels
-- `config/ollama_prompts.yaml` — system/user prompt templates with `{topic}`, `{duration_sec}` placeholders
+- `config/script_prompts.yaml` — system/user prompt templates with `{topic}`, `{duration_sec}` placeholders
 - `config/api_keys.env` — loaded via python-dotenv; missing keys return `None`
 
 ## Tests
 
-191 tests across 13 test files:
+Tests across 14 test files:
 
 ```
 tests/test_story_0_1.py        — Project init (slug, dirs, project.json)
 tests/test_story_0_2.py        — Status command
 tests/test_story_0_3.py        — Config loading
-tests/test_story_1_1.py        — Pexels API client
-tests/test_story_1_2_3.py      — Pixabay, Unsplash, Freesound clients
+tests/test_story_1_2_3.py      — Freesound client
 tests/test_story_1_4_5.py      — Asset download + assets_raw.json
 tests/test_story_2.py          — Metadata extraction (ffprobe, Pillow, librosa, OpenCV)
 tests/test_story_3.py          — Script generation + TTS voiceover

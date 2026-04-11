@@ -239,21 +239,14 @@ def _check_dependencies(module_num: int) -> None:
         console.print("Install ffmpeg: [bold]brew install ffmpeg[/bold]")
         sys.exit(1)
 
-    # Ollama is only needed for Module 3, and only when OpenRouter is NOT configured
+    # Module 3 requires an OpenRouter API key
     if module_num in (3,):
         from src.utils.config_loader import load_api_keys as _load_keys
         _keys = _load_keys()
-        _use_openrouter = _keys.get("USE_OPENROUTER", "").lower() == "true"
-        _has_or_key = bool(_keys.get("OPENROUTER_API_KEY", ""))
-        if not (_use_openrouter and _has_or_key):
-            import requests as _req
-            try:
-                _req.get("http://localhost:11434", timeout=3)
-            except Exception:
-                console.print("[red]Error:[/red] Ollama is not reachable at http://localhost:11434")
-                console.print("Start it with: [bold]ollama serve[/bold]")
-                console.print("Or configure OpenRouter in config/api_keys.env")
-                sys.exit(1)
+        if not _keys.get("OPENROUTER_API_KEY"):
+            console.print("[red]Error:[/red] OPENROUTER_API_KEY is not set in config/api_keys.env")
+            console.print("Get a free key at [bold]https://openrouter.ai[/bold] and add it to the config.")
+            sys.exit(1)
 
 
 def _run_module(

@@ -32,15 +32,11 @@ from src.utils.json_schemas import (
 
 _API_KEYS_WITH_OR = {
     "OPENROUTER_API_KEY": "test-key",
-    "DIRECTOR_MODEL": "anthropic/claude-sonnet-4-5",
-    "OLLAMA_BASE_URL": "http://localhost:11434",
-    "OLLAMA_MODEL": "llama3.2",
+    "OPENROUTER_MODEL": "anthropic/claude-sonnet-4-5",
 }
 
-_API_KEYS_OLLAMA_ONLY = {
+_API_KEYS_NO_OR = {
     "OPENROUTER_API_KEY": "",
-    "OLLAMA_BASE_URL": "http://localhost:11434",
-    "OLLAMA_MODEL": "llama3.2",
 }
 
 
@@ -157,7 +153,7 @@ class TestScriptDirector:
 
     def test_review_falls_back_when_llm_unavailable(self):
         """When LLM raises, the director falls back to the original script."""
-        director = ScriptDirector(api_keys=_API_KEYS_OLLAMA_ONLY)
+        director = ScriptDirector(api_keys=_API_KEYS_NO_OR)
         script = _make_script()
 
         with patch("src.ai_director.call_llm", side_effect=RuntimeError("no key")):
@@ -237,7 +233,7 @@ class TestScriptDirector:
 
     def test_parse_handles_in_out_transition_format(self):
         """Director may return "in"/"out" transition keys instead of Pydantic names."""
-        director = ScriptDirector(api_keys=_API_KEYS_OLLAMA_ONLY)
+        director = ScriptDirector(api_keys=_API_KEYS_NO_OR)
         script = _make_script()
 
         data = script.model_dump(mode="json")
@@ -402,14 +398,14 @@ class TestScriptModuleDirectorIntegration:
             _json.dumps(meta.model_dump(), default=str)
         )
 
-        # Pre-build a minimal Script that generate_script_ollama will return
+        # Pre-build a minimal Script that generate_script will return
         script = _make_script()
         revised_json = _json.dumps(script.model_dump(), default=str)
 
         module = ScriptModule(project_dir, skip_director=False)
 
-        # Patch generate_script_ollama so no real LLM is called
-        with patch.object(module, "generate_script_ollama", return_value=script):
+        # Patch generate_script so no real LLM is called
+        with patch.object(module, "generate_script", return_value=script):
             # Patch ScriptDirector.review to return same script
             with patch("src.ai_director.ScriptDirector.review", return_value=script):
                 # Patch voiceover generation to avoid TTS
@@ -449,7 +445,7 @@ class TestScriptModuleDirectorIntegration:
         script = _make_script()
         module = ScriptModule(project_dir, skip_director=True)
 
-        with patch.object(module, "generate_script_ollama", return_value=script):
+        with patch.object(module, "generate_script", return_value=script):
             with patch.object(module, "generate_all_voiceovers", return_value=script):
                 with patch.object(module, "concatenate_voiceovers"):
                     with patch("src.project_manager.update_pipeline_status"):
