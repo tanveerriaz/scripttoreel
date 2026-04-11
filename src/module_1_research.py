@@ -21,7 +21,6 @@ from src.project_manager import load_project, update_pipeline_status
 from src.utils.api_handlers import (
     APIKeyError,
     FreesoundClient,
-    PexelsClient,
 )
 from src.utils.config_loader import load_api_keys
 from src.utils.json_schemas import Asset, AssetSource, AssetType, ModuleStatus
@@ -216,19 +215,6 @@ class ResearchModule:
                     local_path=str(p),
                 )
                 _add([orphan])
-
-        # B-roll video clips from Pexels (if key available) — mix with SDXL stills
-        pexels_key = self.api_keys.get("PEXELS_API_KEY")
-        if pexels_key:
-            try:
-                pexels = PexelsClient(pexels_key)
-                video_results = self._safe_search(pexels.search_videos, topic, "Pexels video B-roll")
-                # Cap at 3 short clips to keep download time reasonable
-                short_clips = [v for v in video_results if v.duration_sec <= 20][:3]
-                _add(short_clips)
-                logger.info("Pexels: found %d video clips", len(short_clips))
-            except Exception as e:
-                logger.warning("Pexels video search failed: %s", e)
 
         logger.info("Found %d unique assets total; starting downloads", len(all_assets))
 
