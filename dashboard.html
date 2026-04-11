@@ -611,50 +611,67 @@ function playVideo(projectId, title) {
 // ---------------------------------------------------------------------------
 // Project library — show script_title (viral hook) as display title
 // ---------------------------------------------------------------------------
+
+// Safe HTML attribute escaping — avoids fragile JS string interpolation in onclick
+function hesc(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function buildProjectCard(p, { onPlayNavigate = false } = {}) {
+  const displayTitle = p.script_title || p.topic;
+  const date    = p.created_at ? p.created_at.slice(0, 10) : "\u2014";
+  const elapsed = p.pipeline_elapsed_sec ? formatElapsed(p.pipeline_elapsed_sec) : "";
+  const isReady = p.has_video;
+  const id      = p.id;
+
+  const statusBadge = isReady
+    ? `<span class="bg-green-600/90 text-white text-[10px] font-black px-2 py-0.5 rounded tracking-widest uppercase">Ready</span>`
+    : `<span class="bg-amber-500/90 text-white text-[10px] font-black px-2 py-0.5 rounded tracking-widest uppercase">Processing</span>`;
+  const thumbBg = isReady
+    ? `background-image:url('/api/thumbnail/${id}'); background-size:cover; background-position:center;`
+    : "background:#131313;";
+
+  return `<div class="bg-surface-container rounded-lg p-4 flex flex-col space-y-3 hover:bg-surface-high transition-colors group"
+               data-project-id="${hesc(id)}" data-project-title="${hesc(displayTitle)}">
+    <div class="h-36 rounded-lg overflow-hidden relative ${isReady ? "cursor-pointer js-preview" : ""}" style="${thumbBg}">
+      ${!isReady
+        ? `<div class="absolute inset-0 flex items-center justify-center bg-black/50"><div class="w-10 h-10 border-3 border-accent border-t-transparent rounded-full animate-spin"></div></div>`
+        : `<div class="absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity"><span class="material-symbols-outlined text-white/70 text-3xl">visibility</span></div>`}
+      <div class="absolute top-2 right-2">${statusBadge}</div>
+      ${elapsed ? `<div class="absolute bottom-2 left-2 bg-black/70 text-[10px] text-muted px-2 py-0.5 rounded font-mono">${elapsed}</div>` : ""}
+    </div>
+    <div class="flex justify-between items-start">
+      <div class="flex-1 min-w-0 mr-3">
+        <h4 class="font-bold text-sm leading-tight truncate">${hesc(displayTitle)}</h4>
+        <p class="text-[10px] text-muted mt-0.5">${date} \u00B7 ${p.duration_min} min</p>
+      </div>
+      <div class="flex space-x-1.5 shrink-0">
+        ${isReady ? `
+        <button class="js-play p-1.5 bg-surface-highest hover:bg-accent hover:text-black rounded-full transition-all" title="Play">
+          <span class="material-symbols-outlined text-sm">play_arrow</span>
+        </button>
+        <a href="/api/video/${hesc(id)}" download="${hesc(id)}.mp4" class="p-1.5 bg-surface-highest hover:bg-white hover:text-black rounded-full transition-all inline-flex" title="Download">
+          <span class="material-symbols-outlined text-sm">download</span>
+        </a>` : ""}
+        <button class="js-delete p-1.5 bg-surface-highest hover:bg-err hover:text-white rounded-full transition-all" title="Delete" ${onPlayNavigate ? "data-nav-dashboard" : ""}>
+          <span class="material-symbols-outlined text-sm">delete</span>
+        </button>
+      </div>
+    </div>
+  </div>`;
+}
+
 async function loadProjects() {
   const res = await fetch("/api/projects");
   const projects = await res.json();
   const c = document.getElementById("projectsContainer");
-
   if (!projects.length) { c.innerHTML = `<p class="text-muted text-sm col-span-full">No projects yet. Create your first reel above.</p>`; return; }
-
-  c.innerHTML = projects.slice().sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")).map(p => {
-    const displayTitle = p.script_title || p.topic;
-    const date = p.created_at ? p.created_at.slice(0, 10) : "\u2014";
-    const elapsed = p.pipeline_elapsed_sec ? formatElapsed(p.pipeline_elapsed_sec) : "";
-    const escapedTitle = displayTitle.replace(/'/g, "\\'").replace(/"/g, "&quot;");
-    const isReady = p.has_video;
-    const statusBadge = isReady
-      ? `<span class="bg-green-600/90 text-white text-[10px] font-black px-2 py-0.5 rounded tracking-widest uppercase">Ready</span>`
-      : `<span class="bg-amber-500/90 text-white text-[10px] font-black px-2 py-0.5 rounded tracking-widest uppercase">Processing</span>`;
-    const thumb = isReady ? `/api/thumbnail/${p.id}` : "";
-    const thumbBg = thumb ? `background-image:url('${thumb}'); background-size:cover; background-position:center;` : "background:#131313;";
-
-    return `<div class="bg-surface-container rounded-lg p-4 flex flex-col space-y-3 hover:bg-surface-high transition-colors group">
-      <div class="h-36 rounded-lg overflow-hidden relative cursor-pointer" style="${thumbBg}" ${isReady ? `onclick="previewProject('${p.id}','${escapedTitle}')"` : ""}>
-        ${!isReady ? `<div class="absolute inset-0 flex items-center justify-center bg-black/50"><div class="w-10 h-10 border-3 border-accent border-t-transparent rounded-full animate-spin"></div></div>` : `<div class="absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity"><span class="material-symbols-outlined text-white/70 text-3xl">visibility</span></div>`}
-        <div class="absolute top-2 right-2">${statusBadge}</div>
-        ${elapsed ? `<div class="absolute bottom-2 left-2 bg-black/70 text-[10px] text-muted px-2 py-0.5 rounded font-mono">${elapsed}</div>` : ""}
-      </div>
-      <div class="flex justify-between items-start">
-        <div class="flex-1 min-w-0 mr-3">
-          <h4 class="font-bold text-sm leading-tight truncate">${displayTitle}</h4>
-          <p class="text-[10px] text-muted mt-0.5">${date} \u00B7 ${p.duration_min} min</p>
-        </div>
-        <div class="flex space-x-1.5 shrink-0">
-          ${isReady ? `<button onclick="playVideo('${p.id}','${escapedTitle}')" class="p-1.5 bg-surface-highest hover:bg-accent hover:text-black rounded-full transition-all" title="Play">
-            <span class="material-symbols-outlined text-sm">play_arrow</span>
-          </button>
-          <a href="/api/video/${p.id}" download="${p.id}.mp4" class="p-1.5 bg-surface-highest hover:bg-white hover:text-black rounded-full transition-all inline-flex" title="Download">
-            <span class="material-symbols-outlined text-sm">download</span>
-          </a>` : ""}
-          <button onclick="deleteProject('${p.id}','${escapedTitle}')" class="p-1.5 bg-surface-highest hover:bg-err hover:text-white rounded-full transition-all" title="Delete">
-            <span class="material-symbols-outlined text-sm">delete</span>
-          </button>
-        </div>
-      </div>
-    </div>`;
-  }).join("");
+  c.innerHTML = projects.slice().sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")).map(p => buildProjectCard(p)).join("");
 }
 
 async function deleteProject(id, displayTitle) {
@@ -736,41 +753,41 @@ async function loadArchive() {
     return;
   }
 
-  container.innerHTML = done.map(p => {
-    const displayTitle  = p.script_title || p.topic;
-    const date          = p.created_at ? p.created_at.slice(0, 10) : "\u2014";
-    const elapsed       = p.pipeline_elapsed_sec ? formatElapsed(p.pipeline_elapsed_sec) : "";
-    const escapedTitle  = displayTitle.replace(/'/g, "\\'").replace(/"/g, "&quot;");
-    const thumb         = `/api/thumbnail/${p.id}`;
-
-    return `<div class="bg-surface-container rounded-lg p-4 flex flex-col space-y-3 hover:bg-surface-high transition-colors group">
-      <div class="h-36 rounded-lg overflow-hidden relative cursor-pointer" style="background-image:url('${thumb}'); background-size:cover; background-position:center;" onclick="previewProject('${p.id}','${escapedTitle}'); setPage('dashboard');">
-        <div class="absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity">
-          <span class="material-symbols-outlined text-white/70 text-3xl">play_circle</span>
-        </div>
-        <div class="absolute top-2 right-2"><span class="bg-green-600/90 text-white text-[10px] font-black px-2 py-0.5 rounded tracking-widest uppercase">Ready</span></div>
-        ${elapsed ? `<div class="absolute bottom-2 left-2 bg-black/70 text-[10px] text-muted px-2 py-0.5 rounded font-mono">${elapsed}</div>` : ""}
-      </div>
-      <div class="flex justify-between items-start">
-        <div class="flex-1 min-w-0 mr-3">
-          <h4 class="font-bold text-sm leading-tight truncate">${displayTitle}</h4>
-          <p class="text-[10px] text-muted mt-0.5">${date} · ${p.duration_min} min</p>
-        </div>
-        <div class="flex space-x-1.5 shrink-0">
-          <button onclick="previewProject('${p.id}','${escapedTitle}'); setPage('dashboard');" class="p-1.5 bg-surface-highest hover:bg-accent hover:text-black rounded-full transition-all" title="Play">
-            <span class="material-symbols-outlined text-sm">play_arrow</span>
-          </button>
-          <a href="/api/video/${p.id}" download="${p.id}.mp4" class="p-1.5 bg-surface-highest hover:bg-white hover:text-black rounded-full transition-all inline-flex" title="Download">
-            <span class="material-symbols-outlined text-sm">download</span>
-          </a>
-          <button onclick="deleteProject('${p.id}','${escapedTitle}')" class="p-1.5 bg-surface-highest hover:bg-err hover:text-white rounded-full transition-all" title="Delete">
-            <span class="material-symbols-outlined text-sm">delete</span>
-          </button>
-        </div>
-      </div>
-    </div>`;
-  }).join("");
+  container.innerHTML = done.map(p => buildProjectCard(p, { onPlayNavigate: true })).join("");
 }
+
+// ---------------------------------------------------------------------------
+// Delegated event listeners for project cards (delete / play / preview)
+// Avoids all inline onclick string interpolation — works with any title chars
+// ---------------------------------------------------------------------------
+document.addEventListener("click", (e) => {
+  const card = e.target.closest("[data-project-id]");
+  if (!card) return;
+  const id    = card.dataset.projectId;
+  const title = card.dataset.projectTitle;
+
+  // Delete button
+  if (e.target.closest(".js-delete")) {
+    e.stopPropagation();
+    const navigateToDash = e.target.closest("[data-nav-dashboard]");
+    deleteProject(id, title).then(() => { if (navigateToDash) setPage("dashboard"); });
+    return;
+  }
+
+  // Play button
+  if (e.target.closest(".js-play")) {
+    e.stopPropagation();
+    if (e.target.closest("[data-nav-dashboard]")) setPage("dashboard");
+    playVideo(id, title);
+    return;
+  }
+
+  // Thumbnail click (preview)
+  if (e.target.closest(".js-preview")) {
+    if (e.target.closest("[data-nav-dashboard]")) setPage("dashboard");
+    else previewProject(id, title);
+  }
+});
 
 // Allow Enter key in search box to trigger search
 document.getElementById("searchQuery").addEventListener("keydown", (e) => {
