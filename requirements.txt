@@ -41,6 +41,9 @@ diffusers>=0.27.0
 transformers>=4.38.0
 accelerate>=0.27.0
 
+# Web search
+duckduckgo-search>=7.0.0
+
 # Utilities
 numpy>=1.26.0
 tqdm>=4.66.0

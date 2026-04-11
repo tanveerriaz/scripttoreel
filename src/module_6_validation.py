@@ -89,6 +89,9 @@ class ValidationModule:
             file_size_mb=file_size_mb,
         )
 
+        # Generate thumbnail from first content frame (after title card)
+        self._generate_thumbnail(output_path)
+
         self.save_report(report)
         self.print_report(report)
         self._update_status(ModuleStatus.COMPLETE)
@@ -298,6 +301,28 @@ class ValidationModule:
             print(f"\nValidation {'PASSED' if report.passed else 'FAILED'}")
             for c in report.checks:
                 print(f"  {'✅' if c.passed else '❌'} {c.name}: {c.message or 'OK'}")
+
+    def _generate_thumbnail(self, output_path: str) -> None:
+        """Extract a thumbnail frame from the first content scene (after title card)."""
+        try:
+            out_dir = Path(output_path).parent
+            thumb = out_dir / "thumbnail.jpg"
+            thumb_social = out_dir / "thumbnail_social.jpg"
+            # Extract at 5s (after 4s title card)
+            subprocess.run(
+                ["ffmpeg", "-y", "-ss", "5", "-i", output_path,
+                 "-vframes", "1", "-q:v", "2", str(thumb)],
+                capture_output=True, check=True, timeout=15,
+            )
+            # Social media version: 1280x720
+            subprocess.run(
+                ["ffmpeg", "-y", "-ss", "5", "-i", output_path,
+                 "-vframes", "1", "-vf", "scale=1280:720", "-q:v", "2", str(thumb_social)],
+                capture_output=True, check=True, timeout=15,
+            )
+            logger.info("Thumbnails generated: %s, %s", thumb.name, thumb_social.name)
+        except Exception as e:
+            logger.warning("Thumbnail generation failed: %s", e)
 
     def check_not_black(self, output_path: str, probe: dict) -> ValidationCheck:
         """Fail if >80% of the video is pure black — catches blank placeholder renders."""

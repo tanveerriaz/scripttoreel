@@ -106,8 +106,8 @@ class ScriptModule:
         # Enhance the opening hook
         script = self._enhance_hook(script, plan)
 
-        # Run ScriptDirector review unless explicitly skipped
-        if not self.skip_director:
+        # Run ScriptDirector review — skip for short videos (≤1 min) to save ~40-60s
+        if not self.skip_director and duration_min > 1.0:
             script = self._run_script_director(script)
 
         # Clear cached voiceover files so current TTS engine is always used
@@ -485,6 +485,7 @@ class ScriptModule:
         async def _generate() -> None:
             communicate = edge_tts.Communicate(text, voice, rate="+10%")
             mp3_path = out_path.with_suffix(".mp3")
+            mp3_path.parent.mkdir(parents=True, exist_ok=True)
             await communicate.save(str(mp3_path))
             if not mp3_path.exists() or mp3_path.stat().st_size < 100:
                 raise RuntimeError(f"edge-tts produced no output at {mp3_path}")
@@ -567,10 +568,10 @@ class ScriptModule:
         if not shutil.which("say"):
             raise RuntimeError("`say` command not found — not on macOS?")
 
-        # Use preferred_voice from production plan if provided and available,
-        # otherwise fall back to Daniel → Samantha.
+        # Use Samantha (female) as default, matching the pipeline's AriaNeural preference.
         # Rate 175 wpm sounds natural for documentary-style narration.
         aiff = out_path.with_suffix(".aiff")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         available_voices_result = subprocess.run(
             ["say", "-v", "?"], capture_output=True, text=True
         )
@@ -580,17 +581,23 @@ class ScriptModule:
         candidates = []
         if preferred_voice:
             candidates.append(preferred_voice)
-        candidates.extend(("Daniel", "Samantha"))
+        candidates.extend(("Samantha", "Daniel"))
         for candidate in candidates:
             if candidate in available:
                 voice = candidate
                 break
 
-        subprocess.run(
-            ["say", "-v", voice, "-r", "175", "-o", str(aiff), text],
-            check=True,
-            capture_output=True,
-        )
+        # Write text to temp file to avoid CLI arg length limits with long narration
+        txt_file = out_path.with_suffix(".txt")
+        txt_file.write_text(text, encoding="utf-8")
+        try:
+            subprocess.run(
+                ["say", "-v", voice, "-r", "175", "-o", str(aiff), "-f", str(txt_file)],
+                check=True,
+                capture_output=True,
+            )
+        finally:
+            txt_file.unlink(missing_ok=True)
         # Convert AIFF → WAV, upsample to 22050 Hz mono for consistency with piper
         subprocess.run(
             [self._ffmpeg_bin(), "-y", "-i", str(aiff),
@@ -605,11 +612,30 @@ class ScriptModule:
     def generate_all_voiceovers(
         self, script: Script, narrator_voice: Optional[str] = None
     ) -> Script:
+        from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
+
+        narrator = script.narrator_voice or DEFAULT_NARRATOR_VOICE
+
+        def _gen_one(seg):
+            voice = narrator
+            if seg.voice and seg.voice in AVAILABLE_VOICES:
+                voice = seg.voice
+            wav = self.generate_voiceover_segment(seg.text, seg.id, voice=voice)
+            dur = _wav_duration(wav)
+            return seg.model_copy(update={"voiceover_path": str(wav), "voiceover_duration_sec": dur})
+
+        # Parallel TTS: segments are independent, subprocess calls release GIL
+        try:
+            with ThreadPoolExecutor(max_workers=min(len(script.segments), 4)) as pool:
+                updated_segments = list(pool.map(_gen_one, script.segments))
+            return script.model_copy(update={"segments": updated_segments})
+        except Exception as e:
+            logger.warning("Parallel TTS failed (%s) — falling back to sequential", e)
+
+        # Sequential fallback
         updated_segments = []
         for seg in script.segments:
-            # Use per-segment voice if explicitly set to a known voice;
-            # otherwise fall back to script.narrator_voice, then DEFAULT_NARRATOR_VOICE.
-            voice = script.narrator_voice or DEFAULT_NARRATOR_VOICE
+            voice = narrator
             if seg.voice and seg.voice in AVAILABLE_VOICES:
                 voice = seg.voice
             wav = self.generate_voiceover_segment(seg.text, seg.id, voice=voice)

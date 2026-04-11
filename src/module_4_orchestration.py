@@ -100,8 +100,10 @@ class OrchestrationModule:
         # Add 4s title card + 3s outro card
         vo_duration = self._voiceover_duration(script) or script.duration_sec
         total_duration = vo_duration + 4.0 + 3.0
-        scenes = self.build_timeline(script, assets, total_duration=vo_duration, plan=plan)
         background_music = self._find_background_music(assets)
+        beat_grid = self._extract_beat_grid(background_music)
+        scenes = self.build_timeline(script, assets, total_duration=vo_duration, plan=plan, beat_grid=beat_grid)
+        scenes = self._assign_sfx_to_scenes(scenes, script, assets)
 
         meta = self._load_project_meta()
         global_grade = self._plan_color_grade(plan) or self.assign_color_grade(script.mood)
@@ -116,7 +118,7 @@ class OrchestrationModule:
             voiceover_tracks=voiceover_tracks,
         )
 
-        if not self.skip_director:
+        if not self.skip_director and total_duration > 60:
             orch = self._run_visual_director(orch)
 
         self.save_orchestration(orch)
@@ -184,6 +186,7 @@ class OrchestrationModule:
         assets: list[Asset],
         total_duration: float = 0.0,
         plan=None,  # Optional[ProductionPlan]
+        beat_grid: list[float] | None = None,
     ) -> list[Scene]:
         visual_assets = [
             a for a in assets
@@ -278,7 +281,7 @@ class OrchestrationModule:
 
             # Subdivide segment into clips, targeting genre-appropriate duration
             n_clips = max(1, round(seg_dur / _clip_target(seg_idx)))
-            clip_dur = round(seg_dur / n_clips, 3)
+            base_clip_dur = round(seg_dur / n_clips, 3)
 
             # Per-scene color grade: prefer mood-based grade, fall back to plan grade
             plan_grade = self._plan_color_grade(plan)
@@ -295,6 +298,14 @@ class OrchestrationModule:
 
             for clip_idx in range(n_clips):
                 scene_id += 1
+
+                # Beat-snap: nudge clip end to nearest beat (within ±0.4s)
+                clip_dur = base_clip_dur
+                if beat_grid:
+                    proposed_end = cursor + clip_dur
+                    nearest = min(beat_grid, key=lambda b: abs(b - proposed_end), default=proposed_end)
+                    if abs(nearest - proposed_end) < 0.4 and nearest > cursor + 1.0:
+                        clip_dur = round(nearest - cursor, 3)
 
                 # Alternate: even clip_counter → video, odd → image.
                 prefer_video = (clip_counter % 2 == 0)
@@ -463,6 +474,77 @@ class OrchestrationModule:
                     volume=_VOICEOVER_VOLUME,
                 )]
         return []
+
+    def _extract_beat_grid(self, music_track: Optional[AudioTrack]) -> list[float]:
+        """Extract beat times from background music for beat-synced cuts."""
+        if not music_track or not music_track.local_path:
+            return []
+        try:
+            import librosa  # noqa: PLC0415
+            import numpy as np  # noqa: PLC0415
+            y, sr = librosa.load(music_track.local_path, sr=22050, mono=True, duration=120)
+            tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
+            beat_times = librosa.frames_to_time(beats, sr=sr).tolist()
+            logger.info("Beat grid: %.0f BPM, %d beats extracted", float(tempo) if np.ndim(tempo) == 0 else float(tempo[0]), len(beat_times))
+            return beat_times
+        except Exception as e:
+            logger.warning("Beat extraction failed: %s — using time-based cuts", e)
+            return []
+
+    def _assign_sfx_to_scenes(
+        self, scenes: list[Scene], script: Script, assets: list[Asset]
+    ) -> list[Scene]:
+        """Assign downloaded SFX assets to the first scene of each segment."""
+        sfx_assets = [
+            a for a in assets
+            if a.type in (AssetType.AUDIO, AssetType.SFX)
+            and a.local_path and Path(a.local_path).exists()
+            and 0.5 < a.duration_sec < 30  # short sounds, not music loops
+            and a.role in (AssetRole.SFX, AssetRole.MUSIC)  # accept short music clips as SFX
+        ]
+        if not sfx_assets:
+            return scenes
+
+        # Build mapping: segment_id → sfx_cues keywords
+        seg_cues: dict[int, list[str]] = {}
+        for seg in script.segments:
+            seg_cues[seg.id] = [c.lower() for c in (seg.sfx_cues or [])]
+
+        assigned_ids: set[str] = set()
+        updated = []
+        for scene in scenes:
+            if scene.is_title_card or getattr(scene, "is_outro_card", False):
+                updated.append(scene)
+                continue
+
+            cues = seg_cues.get(scene.segment_id, [])
+            if not cues:
+                updated.append(scene)
+                continue
+
+            # Find best matching SFX (not already used) based on keyword overlap
+            best, best_score = None, 0
+            for sfx in sfx_assets:
+                if sfx.id in assigned_ids:
+                    continue
+                tags = {t.lower() for t in (sfx.visual_tags or [])}
+                score = sum(1 for c in cues if any(c in t for t in tags))
+                if score > best_score:
+                    best, best_score = sfx, score
+
+            if best and best_score > 0:
+                assigned_ids.add(best.id)
+                sfx_track = AudioTrack(
+                    asset_id=best.id,
+                    local_path=best.local_path or "",
+                    start_time=scene.start_time,
+                    volume=_SFX_VOLUME,
+                )
+                scene = scene.model_copy(update={"sfx_tracks": [sfx_track]})
+                logger.info("SFX %s assigned to scene %d (seg %d)", best.id, scene.id, scene.segment_id)
+
+            updated.append(scene)
+        return updated
 
     def _find_background_music(self, assets: list[Asset]) -> Optional[AudioTrack]:
         # Prefer dedicated music assets

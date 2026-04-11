@@ -21,6 +21,7 @@ from src.project_manager import load_project, update_pipeline_status
 from src.utils.api_handlers import (
     APIKeyError,
     FreesoundClient,
+    PexelsClient,
 )
 from src.utils.config_loader import load_api_keys
 from src.utils.json_schemas import Asset, AssetSource, AssetType, ModuleStatus
@@ -94,13 +95,7 @@ class ResearchModule:
 
         freesound = FreesoundClient(self.api_keys.get("FREESOUND_API_KEY"))
 
-        # SFX: ambient sounds for scene atmosphere
-        _add(self._safe_search(freesound.search_sounds, topic, "Freesound SFX"))
-        if len(queries) > 1:
-            _add(self._safe_search(freesound.search_sounds, queries[1], f"Freesound SFX [{queries[1]}]"))
-
-        # Background music: tone-aware queries for variety
-        # Map tone → diverse Freesound search queries
+        # Build all Freesound search tasks (SFX + music) for parallel execution
         _TONE_MUSIC_QUERIES: dict[str, list[str]] = {
             "documentary":  ["ambient cinematic background", "documentary score", "atmospheric pad"],
             "educational":  ["ambient cinematic background", "documentary score", "atmospheric pad"],
@@ -120,14 +115,24 @@ class ResearchModule:
                 plan_music_kw = plan_data.get("background_music_keywords", [])
             except Exception:
                 pass
-
         music_queries = _TONE_MUSIC_QUERIES.get(plan_tone, [f"ambient background music {topic}"])
-        # Also add plan-specified music keywords
         if plan_music_kw:
             music_queries = plan_music_kw[:2] + music_queries[:1]
 
+        # Parallel Freesound searches (all I/O-bound HTTP calls)
+        from concurrent.futures import ThreadPoolExecutor, as_completed  # noqa: PLC0415
+        search_tasks = [
+            (freesound.search_sounds, topic, "Freesound SFX"),
+        ]
+        if len(queries) > 1:
+            search_tasks.append((freesound.search_sounds, queries[1], f"Freesound SFX [{queries[1]}]"))
         for mq in music_queries[:3]:
-            _add(self._safe_search(freesound.search_music, mq, f"Freesound music [{mq}]"))
+            search_tasks.append((freesound.search_music, mq, f"Freesound music [{mq}]"))
+
+        with ThreadPoolExecutor(max_workers=min(len(search_tasks), 5)) as pool:
+            futures = {pool.submit(self._safe_search, fn, q, label): label for fn, q, label in search_tasks}
+            for f in as_completed(futures):
+                _add(f.result())
 
         # AI image generation — locally via SDXL + MPS (graceful skip if not installed)
         tone = ""
@@ -164,9 +169,10 @@ class ResearchModule:
         # Build SDXL prompt list: prefer per-segment sdxl_prompts, then plan prompts, then queries
         sdxl_prompts: list[str] = []
         if segment_sdxl_prompts:
-            # Per-segment prompts are most specific — generate 2 candidates each
+            # Per-segment prompts are most specific
             sdxl_prompts = segment_sdxl_prompts
-            images_per_query = 2  # 2 candidates per scene, orchestrator picks best
+            # Short videos: 1 image per prompt (faster). Longer: 2 candidates per scene.
+            images_per_query = 1 if duration_min <= 0.5 else 2
             logger.info("SDXL: using %d per-segment sdxl_prompt fields", len(sdxl_prompts))
         else:
             # Fall back to queries + style modifier
@@ -211,9 +217,22 @@ class ResearchModule:
                 )
                 _add([orphan])
 
+        # B-roll video clips from Pexels (if key available) — mix with SDXL stills
+        pexels_key = self.api_keys.get("PEXELS_API_KEY")
+        if pexels_key:
+            try:
+                pexels = PexelsClient(pexels_key)
+                video_results = self._safe_search(pexels.search_videos, topic, "Pexels video B-roll")
+                # Cap at 3 short clips to keep download time reasonable
+                short_clips = [v for v in video_results if v.duration_sec <= 20][:3]
+                _add(short_clips)
+                logger.info("Pexels: found %d video clips", len(short_clips))
+            except Exception as e:
+                logger.warning("Pexels video search failed: %s", e)
+
         logger.info("Found %d unique assets total; starting downloads", len(all_assets))
 
-        # Download all assets — single-line Rich progress bar
+        # Download all assets — parallel with Rich progress bar
         downloaded: list[Asset] = []
         with Progress(
             TextColumn("[cyan]   Downloading assets[/cyan]"),
@@ -221,13 +240,14 @@ class ResearchModule:
             TaskProgressColumn(),
             TextColumn("[dim]{task.completed}/{task.total} files[/dim]"),
             TimeRemainingColumn(),
-            transient=True,  # clears the bar line when done
+            transient=True,
         ) as progress:
-            task = progress.add_task("", total=len(all_assets))
-            for asset in all_assets:
-                updated = self.download_asset(asset)
-                downloaded.append(updated)
-                progress.advance(task)
+            dl_task = progress.add_task("", total=len(all_assets))
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                futures = {pool.submit(self.download_asset, a): a for a in all_assets}
+                for f in as_completed(futures):
+                    downloaded.append(f.result())
+                    progress.advance(dl_task)
 
         self.save_assets_raw(downloaded)
 

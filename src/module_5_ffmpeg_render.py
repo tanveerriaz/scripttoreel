@@ -79,33 +79,18 @@ class RenderModule:
             tmp = Path(tmpdir)
             final_out = self.output_dir / "final_video.mp4"
 
-            # Step 1 + 2: build and concatenate scene clips
-            video_no_caps = tmp / "video_no_caps.mp4"
+            # Step 1 + 2: build scene clips and concatenate in ONE encode pass
             video_only = tmp / "video_only.mp4"
             if orch.scenes:
                 clips = self._build_all_scene_clips(orch, tmp)
-                self._write_concat(clips, str(video_no_caps), orch.total_duration_sec, orch.scenes)
+                self._write_concat(clips, str(video_only), orch.total_duration_sec,
+                                   orch.scenes)
             else:
                 logger.warning(
                     "No scenes — rendering black placeholder for %.1fs",
                     orch.total_duration_sec,
                 )
-                self._render_placeholder(orch.total_duration_sec, video_no_caps)
-
-            # Step 2b: composite burned-in captions
-            cap_clips = self._build_caption_clips(orch.scenes, tmp) if orch.scenes else []
-            if cap_clips:
-                from moviepy import VideoFileClip, CompositeVideoClip
-                base = VideoFileClip(str(video_no_caps))
-                captioned = CompositeVideoClip([base] + cap_clips, size=(_W, _H))
-                captioned.write_videofile(
-                    str(video_only), fps=_FPS, codec=self._hw_encoder,
-                    audio=False, ffmpeg_params=self._video_ffmpeg_params(), logger=None,
-                )
-                base.close()
-                captioned.close()
-            else:
-                shutil.copy(str(video_no_caps), str(video_only))
+                self._render_placeholder(orch.total_duration_sec, video_only)
 
             # Step 3: mix audio via ffmpeg (LUFS, amix)
             audio_out = tmp / "mixed_audio.aac"
@@ -437,9 +422,10 @@ class RenderModule:
     # ------------------------------------------------------------------
 
     def _write_concat(self, clips: list, out_path: str, total_duration: float,
-                       scenes: list[Scene] | None = None) -> None:
-        """Concatenate scene clips with per-scene transitions and write to file."""
-        from moviepy import concatenate_videoclips
+                       scenes: list[Scene] | None = None,
+                       caption_clips: list | None = None) -> None:
+        """Concatenate scene clips with transitions in a single encode pass."""
+        from moviepy import concatenate_videoclips, CompositeVideoClip
 
         if not clips:
             self._render_placeholder(total_duration, Path(out_path))
@@ -820,14 +806,27 @@ class RenderModule:
     # Title Card (professional intro sequence)
     # ------------------------------------------------------------------
 
+    def _brand(self, key: str, default):
+        """Read a branding config value with fallback."""
+        brand = self._presets.get("branding", {})
+        val = brand.get(key, default)
+        if isinstance(val, list) and len(val) >= 3:
+            return tuple(val) + (255,) if len(val) == 3 else tuple(val)
+        return val
+
     def _build_title_card(self, scene: Scene, tmp: Path):
         """Render a cinematic title card: serif title + gold divider + subtitle."""
         from PIL import Image, ImageDraw
         from moviepy import ImageClip, vfx
 
         duration = scene.duration_sec
-        img = Image.new("RGBA", (_W, _H), (0, 0, 0, 255))
+        bg = self._brand("background_color", [0, 0, 0])
+        img = Image.new("RGBA", (_W, _H), bg)
         draw = ImageDraw.Draw(img)
+
+        primary = self._brand("primary_color", [240, 235, 220])
+        secondary = self._brand("secondary_color", [201, 168, 76])
+        accent = self._brand("accent_color", [140, 135, 125])
 
         # Fonts
         title_font = self._resolve_font("title_serif", 76)
@@ -853,15 +852,14 @@ class RenderModule:
             lx = int((_W - lw) / 2)
             self._draw_text_outlined(
                 draw, (lx, title_y + j * line_h), line, font=title_font,
-                fill=(240, 235, 220, 255), outline_width=2, shadow=True,
+                fill=primary, outline_width=2, shadow=True,
             )
 
-        # Gold horizontal divider
+        # Divider accent line
         divider_y = int(_H / 2) + 5
         divider_w = 220
-        gold = (201, 168, 76, 255)
         div_x = int((_W - divider_w) / 2)
-        draw.rectangle([div_x, divider_y, div_x + divider_w, divider_y + 2], fill=gold)
+        draw.rectangle([div_x, divider_y, div_x + divider_w, divider_y + 2], fill=secondary)
 
         # Subtitle below divider (topic or tagline)
         sub_text = scene.caption_text or ""
@@ -871,8 +869,11 @@ class RenderModule:
             sy = divider_y + 25
             self._draw_text_outlined(
                 draw, (sx, sy), sub_text, font=sub_font,
-                fill=(180, 175, 165, 255), outline_width=1, shadow=False,
+                fill=accent, outline_width=1, shadow=False,
             )
+
+        # Optional logo
+        self._composite_logo(img)
 
         # Save as PNG and create clip
         card_path = str(tmp / "title_card.png")
@@ -882,14 +883,44 @@ class RenderModule:
         clip = clip.with_effects([vfx.FadeIn(1.5), vfx.FadeOut(0.5)])
         return clip
 
+    def _composite_logo(self, img) -> None:
+        """Composite brand logo onto an image if logo_path is configured."""
+        from PIL import Image as PILImage
+        logo_path = self._presets.get("branding", {}).get("logo_path", "")
+        if not logo_path or not Path(logo_path).exists():
+            return
+        try:
+            logo = PILImage.open(logo_path).convert("RGBA")
+            target_h = int(self._presets.get("branding", {}).get("logo_size", 60))
+            ratio = target_h / logo.height
+            logo = logo.resize((int(logo.width * ratio), target_h), PILImage.LANCZOS)
+            pos_name = self._presets.get("branding", {}).get("logo_position", "bottom_right")
+            margin = 30
+            if pos_name == "bottom_right":
+                pos = (_W - logo.width - margin, _H - logo.height - margin)
+            elif pos_name == "bottom_left":
+                pos = (margin, _H - logo.height - margin)
+            elif pos_name == "top_right":
+                pos = (_W - logo.width - margin, margin)
+            else:
+                pos = (margin, margin)
+            img.paste(logo, pos, logo)
+        except Exception as e:
+            logger.warning("Logo composite failed: %s", e)
+
     def _build_outro_card(self, scene: Scene, tmp: Path):
         """Render a cinematic outro card: closing text + gold divider + attribution."""
         from PIL import Image, ImageDraw
         from moviepy import ImageClip, vfx
 
         duration = scene.duration_sec
-        img = Image.new("RGBA", (_W, _H), (0, 0, 0, 255))
+        bg = self._brand("background_color", [0, 0, 0])
+        img = Image.new("RGBA", (_W, _H), bg)
         draw = ImageDraw.Draw(img)
+
+        primary = self._brand("primary_color", [240, 235, 220])
+        secondary = self._brand("secondary_color", [201, 168, 76])
+        accent = self._brand("accent_color", [140, 135, 125])
 
         title_font = self._resolve_font("title_serif", 56)
         attr_font = self._resolve_font("overlay_sans", 24)
@@ -906,23 +937,25 @@ class RenderModule:
             lx = int((_W - lw) / 2)
             self._draw_text_outlined(
                 draw, (lx, y_start + j * line_h), line, font=title_font,
-                fill=(240, 235, 220, 255), outline_width=2, shadow=True,
+                fill=primary, outline_width=2, shadow=True,
             )
 
-        # Gold divider
+        # Divider accent line
         divider_y = int(_H / 2) + 10
-        gold = (201, 168, 76, 255)
         div_x = int((_W - 160) / 2)
-        draw.rectangle([div_x, divider_y, div_x + 160, divider_y + 2], fill=gold)
+        draw.rectangle([div_x, divider_y, div_x + 160, divider_y + 2], fill=secondary)
 
-        # Attribution
-        attr_text = "Generated by ScriptToReel"
+        # Attribution from config
+        attr_text = self._presets.get("branding", {}).get("attribution_text", "Generated by ScriptToReel")
         aw = draw.textlength(attr_text, font=attr_font)
         ax = int((_W - aw) / 2)
         self._draw_text_outlined(
             draw, (ax, divider_y + 25), attr_text, font=attr_font,
-            fill=(140, 135, 125, 255), outline_width=1, shadow=False,
+            fill=accent, outline_width=1, shadow=False,
         )
+
+        # Optional logo
+        self._composite_logo(img)
 
         card_path = str(tmp / "outro_card.png")
         img.save(card_path, "PNG")

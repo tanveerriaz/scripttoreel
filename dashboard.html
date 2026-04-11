@@ -1,781 +1,664 @@
 <!DOCTYPE html>
-<html lang="en">
+<html class="dark" lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<link rel="icon" href="assets/branding/app-icon.svg" type="image/svg+xml" />
-<title>ScriptToReel — AI Video Generator</title>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>ScriptToReel | AI Video Generation</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<script>
+tailwind.config = {
+  darkMode: "class",
+  theme: {
+    extend: {
+      colors: {
+        "surface": "#0e0e0e",
+        "surface-low": "#131313",
+        "surface-container": "#1a1919",
+        "surface-high": "#201f1f",
+        "surface-highest": "#262626",
+        "accent": "#cffc00",
+        "accent-dim": "#a8cc00",
+        "accent-text": "#f4ffc8",
+        "on-surface": "#ffffff",
+        "muted": "#777575",
+        "muted-dim": "#494847",
+        "err": "#ff7351",
+      },
+      fontFamily: { sans: ["Inter", "sans-serif"] },
+    },
+  },
+}
+</script>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-
-  :root {
-    --bg: #0d0f14;
-    --surface: #161b26;
-    --border: #252d3d;
-    --accent: #6366f1;
-    --accent-dim: #4f52c9;
-    --green: #22c55e;
-    --red: #ef4444;
-    --yellow: #eab308;
-    --text: #e2e8f0;
-    --muted: #64748b;
-    --radius: 12px;
-  }
-
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
-    min-height: 100vh;
-    padding: 24px;
-  }
-
-  header {
-    text-align: center;
-    margin-bottom: 40px;
-  }
-
-  header .brand-lockup {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 18px;
-    flex-wrap: wrap;
-  }
-
-  /* Dark SVG reel on dark page reads invisible; lift it on a surface tile + slight brighten */
-  header .brand-lockup .brand-icon {
-    width: 56px;
-    height: 56px;
-    flex-shrink: 0;
-    border-radius: 14px;
-    background: linear-gradient(160deg, #252d3d 0%, #1a2130 100%);
-    border: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 2px 14px rgba(99, 102, 241, 0.35);
-  }
-
-  header .brand-lockup .brand-icon img {
-    width: 44px;
-    height: 44px;
-    filter: brightness(1.35) contrast(1.1);
-  }
-
-  header .brand-lockup .brand-text {
-    text-align: left;
-  }
-
-  @media (max-width: 520px) {
-    header .brand-lockup { flex-direction: column; }
-    header .brand-lockup .brand-text { text-align: center; }
-  }
-
-  header h1 {
-    font-size: 2.2rem;
-    font-weight: 700;
-    background: linear-gradient(135deg, #6366f1, #a855f7, #ec4899);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    letter-spacing: -0.5px;
-  }
-
-  header p {
-    color: var(--muted);
-    margin-top: 6px;
-    font-size: 0.95rem;
-  }
-
-  .container {
-    max-width: 860px;
-    margin: 0 auto;
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-  }
-
-  /* ── Card ── */
-  .card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 28px;
-  }
-
-  .card h2 {
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    margin-bottom: 18px;
-  }
-
-  /* ── Form ── */
-  .form-row {
-    display: flex;
-    gap: 14px;
-    flex-wrap: wrap;
-  }
-
-  .form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .form-group.grow { flex: 1; min-width: 240px; }
-
-  label { font-size: 0.85rem; color: var(--muted); font-weight: 500; }
-
-  input, select {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    color: var(--text);
-    font-size: 0.95rem;
-    padding: 10px 14px;
-    outline: none;
-    transition: border-color 0.2s;
-  }
-
-  input:focus, select:focus { border-color: var(--accent); }
-  input::placeholder { color: var(--muted); }
-
-  select option { background: var(--surface); }
-
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 11px 24px;
-    border-radius: 8px;
-    font-size: 0.95rem;
-    font-weight: 600;
-    cursor: pointer;
-    border: none;
-    transition: opacity 0.2s, transform 0.1s;
-    white-space: nowrap;
-  }
-
-  .btn:active { transform: scale(0.97); }
-  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
-
-  .btn-primary {
-    background: var(--accent);
-    color: #fff;
-    align-self: flex-end;
-  }
-
-  .btn-primary:hover:not(:disabled) { background: var(--accent-dim); }
-
-  .btn-download {
-    background: var(--green);
-    color: #000;
-    font-weight: 700;
-    font-size: 1rem;
-    padding: 13px 32px;
-  }
-
-  /* ── Pipeline Steps ── */
-  .steps {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .step {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 13px 16px;
-    border-radius: 8px;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    transition: background 0.3s, border-color 0.3s;
-  }
-
-  .step.active {
-    background: #1e1b4b;
-    border-color: var(--accent);
-  }
-
-  .step.complete {
-    background: #052e16;
-    border-color: #166534;
-  }
-
-  .step.failed {
-    background: #2d0a0a;
-    border-color: #7f1d1d;
-  }
-
-  .step-icon {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.85rem;
-    font-weight: 700;
-    flex-shrink: 0;
-    background: var(--border);
-    color: var(--muted);
-    transition: background 0.3s, color 0.3s;
-  }
-
-  .step.active .step-icon {
-    background: var(--accent);
-    color: #fff;
-    animation: pulse 1.4s ease-in-out infinite;
-  }
-
-  .step.complete .step-icon { background: var(--green); color: #000; }
-  .step.failed .step-icon { background: var(--red); color: #fff; }
-
-  @keyframes pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(99,102,241,0.5); }
-    50% { box-shadow: 0 0 0 8px rgba(99,102,241,0); }
-  }
-
-  .step-info { flex: 1; }
-  .step-name { font-size: 0.9rem; font-weight: 600; }
-  .step-label { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
-
-  .step-badge {
-    font-size: 0.75rem;
-    font-weight: 600;
-    padding: 3px 10px;
-    border-radius: 999px;
-  }
-
-  .badge-pending  { background: #1e293b; color: var(--muted); }
-  .badge-running  { background: #312e81; color: #a5b4fc; }
-  .badge-complete { background: #14532d; color: #86efac; }
-  .badge-failed   { background: #7f1d1d; color: #fca5a5; }
-
-  /* ── Progress bar ── */
-  .progress-wrap {
-    background: var(--bg);
-    border-radius: 999px;
-    height: 6px;
-    overflow: hidden;
-    margin-top: 4px;
-  }
-
-  .progress-bar {
-    height: 100%;
-    background: linear-gradient(90deg, var(--accent), #a855f7);
-    border-radius: 999px;
-    transition: width 0.6s ease;
-  }
-
-  /* ── Log ── */
-  .log-box {
-    background: #0a0c10;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 14px 16px;
-    font-family: 'JetBrains Mono', 'Fira Code', 'Menlo', monospace;
-    font-size: 0.78rem;
-    line-height: 1.6;
-    max-height: 240px;
-    overflow-y: auto;
-    color: #94a3b8;
-    white-space: pre-wrap;
-    word-break: break-all;
-  }
-
-  .log-line-success { color: #86efac; }
-  .log-line-error   { color: #fca5a5; }
-  .log-line-info    { color: #93c5fd; }
-
-  /* ── Result ── */
-  .result-box {
-    display: none;
-    flex-direction: column;
-    align-items: center;
-    gap: 18px;
-    padding: 32px;
-    text-align: center;
-  }
-
-  .result-box.visible { display: flex; }
-
-  .result-emoji { font-size: 3.5rem; }
-
-  .result-title {
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: var(--green);
-  }
-
-  .result-meta {
-    color: var(--muted);
-    font-size: 0.9rem;
-  }
-
-  /* ── Projects table ── */
-  .proj-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.85rem;
-  }
-
-  .proj-table th {
-    text-align: left;
-    padding: 8px 12px;
-    color: var(--muted);
-    border-bottom: 1px solid var(--border);
-    font-weight: 500;
-  }
-
-  .proj-table td {
-    padding: 10px 12px;
-    border-bottom: 1px solid #1a2033;
-    vertical-align: middle;
-  }
-
-  .proj-table tr:last-child td { border-bottom: none; }
-
-  .proj-table tr:hover td { background: #111827; }
-
-  .pill {
-    display: inline-block;
-    padding: 2px 10px;
-    border-radius: 999px;
-    font-size: 0.72rem;
-    font-weight: 600;
-  }
-
-  .pill-green { background: #14532d; color: #86efac; }
-  .pill-gray  { background: #1e293b; color: var(--muted); }
-
-  .del-btn {
-    background: none;
-    border: 1px solid #3f1f1f;
-    border-radius: 6px;
-    color: #f87171;
-    cursor: pointer;
-    font-size: 0.78rem;
-    padding: 4px 10px;
-    transition: border-color 0.2s, background 0.2s;
-  }
-  .del-btn:hover { border-color: var(--red); background: #3f1f1f; }
-
-  .link-btn {
-    background: none;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    color: var(--text);
-    font-size: 0.78rem;
-    padding: 4px 10px;
-    cursor: pointer;
-    transition: border-color 0.2s;
-  }
-
-  .link-btn:hover { border-color: var(--accent); color: var(--accent); }
-
-  /* ── Error banner ── */
-  .error-banner {
-    display: none;
-    background: #2d0a0a;
-    border: 1px solid #7f1d1d;
-    border-radius: 8px;
-    padding: 12px 16px;
-    color: #fca5a5;
-    font-size: 0.88rem;
-  }
-
-  .error-banner.visible { display: block; }
-
-  /* ── Scrollbar ── */
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { background: var(--bg); }
-  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+body { font-family: 'Inter', sans-serif; }
+.material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #262626; border-radius: 10px; }
+.progress-ring { transition: stroke-dashoffset 0.4s ease; }
 </style>
 </head>
-<body>
+<body class="bg-surface text-on-surface overflow-hidden">
 
-<header>
-  <div class="brand-lockup">
-    <div class="brand-icon" aria-hidden="true">
-      <img src="assets/branding/app-icon.svg" width="44" height="44" alt="" />
+<!-- Sidebar -->
+<aside class="h-screen w-60 fixed left-0 top-0 bg-black/90 backdrop-blur-2xl shadow-2xl shadow-black flex flex-col py-8 z-50">
+  <div class="px-7 mb-10">
+    <h1 class="text-xl font-black italic tracking-tighter text-white">ScriptToReel</h1>
+    <p class="text-[10px] text-muted mt-1 font-bold uppercase tracking-widest">AI Video Generator</p>
+  </div>
+  <nav class="flex-1 space-y-1">
+    <div class="bg-accent text-black rounded-full mx-3 py-2.5 px-5 flex items-center space-x-3 cursor-pointer">
+      <span class="material-symbols-outlined text-sm">grid_view</span>
+      <span class="text-xs font-bold uppercase tracking-widest">Dashboard</span>
     </div>
-    <div class="brand-text">
-      <h1>ScriptToReel</h1>
-      <p>Turn a topic into a 1080p MP4 — OpenRouter or Ollama · MoviePy v2.0 · FFmpeg · stock APIs · edge-tts</p>
+    <div class="text-muted mx-3 py-2.5 px-5 flex items-center space-x-3 cursor-pointer hover:bg-surface-highest rounded-full transition-all">
+      <span class="material-symbols-outlined text-sm">add_circle</span>
+      <span class="text-xs font-bold uppercase tracking-widest">Create</span>
+    </div>
+    <div class="text-muted mx-3 py-2.5 px-5 flex items-center space-x-3 cursor-pointer hover:bg-surface-highest rounded-full transition-all">
+      <span class="material-symbols-outlined text-sm">inventory_2</span>
+      <span class="text-xs font-bold uppercase tracking-widest">Archive</span>
+    </div>
+  </nav>
+  <div class="px-5 mt-auto">
+    <div class="text-muted py-2 px-4 flex items-center space-x-3 cursor-pointer hover:text-white transition-colors text-xs">
+      <span class="material-symbols-outlined text-sm">help_outline</span>
+      <span class="font-bold uppercase tracking-widest">Help</span>
     </div>
   </div>
-</header>
+</aside>
 
-<div class="container">
+<!-- Main -->
+<main class="ml-60 h-screen flex flex-col">
+  <!-- Top Bar -->
+  <header class="fixed top-0 left-60 right-0 h-16 bg-black/80 backdrop-blur-xl z-40 flex justify-between items-center px-10 border-b border-surface-highest">
+    <span class="text-accent text-sm font-bold uppercase tracking-widest">Dashboard</span>
+    <div class="flex items-center space-x-4">
+      <span id="liveTimer" class="text-muted text-xs font-mono tabular-nums hidden">0:00</span>
+      <span id="liveStatus" class="text-muted text-xs hidden"></span>
+    </div>
+  </header>
 
-  <!-- Generate Form -->
-  <div class="card">
-    <h2>Generate New Video</h2>
-    <div class="form-row">
-      <div class="form-group grow">
-        <label for="topic">Topic</label>
-        <input id="topic" type="text" placeholder="e.g. The Rise of Agentic AI" />
+  <!-- Content -->
+  <div class="mt-16 flex-1 overflow-y-auto px-10 py-8">
+
+    <!-- Hero Grid -->
+    <div class="grid grid-cols-12 gap-6 mb-10">
+
+      <!-- Create Card -->
+      <section class="col-span-12 lg:col-span-7 bg-surface-low rounded-xl p-7 relative overflow-hidden">
+        <div class="absolute top-0 right-0 -mr-16 -mt-16 w-64 h-64 bg-accent/10 blur-[100px]"></div>
+        <h2 class="text-3xl font-black tracking-tight mb-6">CREATE <span class="text-accent">NEW REEL</span></h2>
+        <div class="space-y-5">
+
+          <!-- STATE 1: Search -->
+          <div id="stateSearch" class="space-y-5">
+            <div class="space-y-1.5">
+              <label class="text-[10px] font-bold uppercase tracking-widest text-muted ml-1">What do you want to create a video about?</label>
+              <div class="relative">
+                <textarea id="searchQuery" class="w-full bg-surface-highest/50 border-none rounded-lg p-5 pr-12 text-base font-medium placeholder-muted-dim focus:ring-2 focus:ring-accent transition-all resize-none" placeholder="e.g. cybersecurity trends, AI breakthroughs, space exploration..." rows="2"></textarea>
+                <span class="material-symbols-outlined absolute right-4 top-5 text-muted-dim">search</span>
+              </div>
+            </div>
+            <button id="searchBtn" onclick="searchTopics()" class="w-full bg-accent text-black font-black py-4 rounded-full text-base uppercase tracking-tight hover:shadow-[0_0_40px_rgba(207,252,0,0.3)] transition-all active:scale-[0.98]">
+              Find Topics
+            </button>
+          </div>
+
+          <!-- STATE 2: Suggestions -->
+          <div id="stateSuggestions" class="hidden space-y-4">
+            <div class="flex items-center justify-between">
+              <span class="text-[10px] font-bold uppercase tracking-widest text-muted">Suggested Topics</span>
+              <button onclick="goToSearch()" class="text-[10px] font-bold uppercase tracking-widest text-accent hover:underline">Back</button>
+            </div>
+
+            <!-- Loading spinner -->
+            <div id="suggestionsLoading" class="flex flex-col items-center justify-center py-8 space-y-3">
+              <div class="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin"></div>
+              <span class="text-muted text-xs">Searching the web & generating ideas...</span>
+            </div>
+
+            <!-- Suggestion cards -->
+            <div id="suggestionsGrid" class="hidden space-y-2.5 max-h-64 overflow-y-auto"></div>
+
+            <!-- Custom topic input -->
+            <div id="customTopicArea" class="hidden space-y-2 pt-2 border-t border-surface-highest">
+              <label class="text-[10px] font-bold uppercase tracking-widest text-muted ml-1">Or write your own</label>
+              <div class="flex gap-2">
+                <input id="customTopic" type="text" class="flex-1 bg-surface-highest/50 border-none rounded-lg p-3 text-sm font-medium placeholder-muted-dim focus:ring-2 focus:ring-accent" placeholder="Type your custom topic..."/>
+                <button onclick="selectCustomTopic()" class="px-5 py-3 bg-accent text-black text-xs font-black uppercase rounded-lg hover:shadow-lg transition-all">Use</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- STATE 3: Approve -->
+          <div id="stateApprove" class="hidden space-y-5">
+            <div class="flex items-center justify-between">
+              <span class="text-[10px] font-bold uppercase tracking-widest text-muted">Review & Generate</span>
+              <button onclick="goToSuggestions()" class="text-[10px] font-bold uppercase tracking-widest text-accent hover:underline">Change Topic</button>
+            </div>
+
+            <div class="space-y-1.5">
+              <label class="text-[10px] font-bold uppercase tracking-widest text-muted ml-1">Selected Topic</label>
+              <div id="approvedTopicDisplay" class="bg-surface-highest/50 rounded-lg p-4 text-sm font-medium"></div>
+            </div>
+
+            <div class="space-y-1.5">
+              <label class="text-[10px] font-bold uppercase tracking-widest text-muted ml-1">Video Title (Viral Hook)</label>
+              <div class="relative">
+                <input id="hookTitle" type="text" class="w-full bg-surface-highest/50 border-none rounded-lg p-4 text-sm font-bold placeholder-muted-dim focus:ring-2 focus:ring-accent" placeholder="Generating viral hook..."/>
+                <button onclick="regenerateHook()" class="absolute right-3 top-3 p-1 hover:bg-surface-highest rounded-full transition-all" title="Regenerate hook">
+                  <span class="material-symbols-outlined text-accent text-sm">refresh</span>
+                </button>
+              </div>
+              <div id="hookLoading" class="hidden flex items-center space-x-2 ml-1">
+                <div class="w-3 h-3 border border-accent border-t-transparent rounded-full animate-spin"></div>
+                <span class="text-muted text-[10px]">Generating hook...</span>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+              <div class="space-y-1.5">
+                <label class="text-[10px] font-bold uppercase tracking-widest text-muted ml-1">Duration</label>
+                <select id="duration" class="w-full bg-surface-highest/50 border-none rounded-lg p-3.5 text-sm font-bold focus:ring-2 focus:ring-accent">
+                  <option value="0.5">30 Seconds</option>
+                  <option value="1">1 Minute</option>
+                  <option value="2">2 Minutes</option>
+                  <option value="3" selected>3 Minutes</option>
+                  <option value="5">5 Minutes</option>
+                </select>
+              </div>
+              <div class="space-y-1.5">
+                <label class="text-[10px] font-bold uppercase tracking-widest text-muted ml-1">Voice</label>
+                <div class="flex items-center justify-between bg-surface-highest/50 rounded-lg p-3.5">
+                  <span class="font-bold text-sm">Kokoro (Natural)</span>
+                  <span class="material-symbols-outlined text-accent text-sm">graphic_eq</span>
+                </div>
+              </div>
+            </div>
+
+            <button id="generateBtn" onclick="startGeneration()" class="w-full bg-accent text-black font-black py-4 rounded-full text-base uppercase tracking-tight hover:shadow-[0_0_40px_rgba(207,252,0,0.3)] transition-all active:scale-[0.98]">
+              Generate Video
+            </button>
+          </div>
+
+          <!-- STATE 4: Progress (shown during generation) -->
+          <div id="progressArea" class="hidden space-y-3">
+            <div class="flex justify-between items-center text-xs">
+              <span id="progressLabel" class="text-muted">Initializing...</span>
+              <div class="flex items-center space-x-3">
+                <span id="elapsedTime" class="text-muted font-mono tabular-nums">0:00</span>
+                <span id="progressPct" class="text-accent font-bold">0%</span>
+              </div>
+            </div>
+            <div class="w-full bg-surface-highest rounded-full h-1.5">
+              <div id="progressBar" class="bg-accent h-1.5 rounded-full transition-all duration-300" style="width:0%"></div>
+            </div>
+            <div id="stepsContainer" class="space-y-1.5 max-h-48 overflow-y-auto"></div>
+          </div>
+
+          <!-- Log (collapsed) -->
+          <div id="logArea" class="hidden">
+            <details class="group">
+              <summary class="text-[10px] font-bold uppercase tracking-widest text-muted cursor-pointer select-none">Live Log</summary>
+              <div id="logBox" class="mt-2 max-h-32 overflow-y-auto bg-black/50 rounded-lg p-3 text-[11px] font-mono text-muted space-y-0.5"></div>
+            </details>
+          </div>
+
+          <div id="errorBanner" class="hidden text-err text-sm bg-err/10 rounded-lg p-3"></div>
+        </div>
+      </section>
+
+      <!-- Video Preview -->
+      <section class="col-span-12 lg:col-span-5 bg-surface-low rounded-xl overflow-hidden relative shadow-2xl flex flex-col">
+        <div class="flex-1 relative bg-black min-h-[280px] flex items-center justify-center">
+          <div id="videoPlaceholder" class="text-center">
+            <span class="material-symbols-outlined text-muted-dim text-5xl mb-2 block">smart_display</span>
+            <p class="text-muted text-xs">Generate or select a video</p>
+          </div>
+          <video id="videoPlayer" controls playsinline class="absolute inset-0 w-full h-full object-contain hidden"></video>
+          <div id="playOverlay" onclick="onPlayOverlayClick()" class="absolute inset-0 flex items-center justify-center cursor-pointer hidden">
+            <div class="w-16 h-16 bg-accent rounded-full flex items-center justify-center shadow-2xl hover:scale-110 transition-transform">
+              <span class="material-symbols-outlined text-black text-3xl" style="font-variation-settings:'FILL' 1;">play_arrow</span>
+            </div>
+          </div>
+        </div>
+        <div class="flex justify-between items-center bg-surface-container p-4 border-t border-surface-highest">
+          <div class="flex-1 min-w-0">
+            <p class="text-[10px] font-bold uppercase tracking-widest text-accent" id="videoLabel">Preview</p>
+            <p class="font-bold text-sm truncate" id="videoTitle">No video loaded</p>
+          </div>
+          <a id="playerDownloadBtn" href="#" class="hidden ml-3 px-4 py-2 bg-surface-highest hover:bg-accent hover:text-black text-xs font-bold uppercase tracking-widest rounded-full transition-all" download>
+            Download
+          </a>
+        </div>
+      </section>
+    </div>
+
+    <!-- Projects Library -->
+    <section>
+      <div class="flex items-center justify-between mb-6">
+        <h3 class="text-xl font-black uppercase tracking-tight">Recent <span class="text-accent">Work</span></h3>
       </div>
-      <div class="form-group">
-        <label for="duration">Duration (minutes)</label>
-        <select id="duration">
-          <option value="0.5">30 seconds</option>
-          <option value="1">1 minute</option>
-          <option value="2">2 minutes</option>
-          <option value="3" selected>3 minutes</option>
-          <option value="5">5 minutes</option>
-          <option value="10">10 minutes</option>
-        </select>
+      <div id="projectsContainer" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+        <p class="text-muted text-sm col-span-full">Loading...</p>
       </div>
-      <div class="form-group" style="justify-content: flex-end;">
-        <label>&nbsp;</label>
-        <button class="btn btn-primary" id="generateBtn" onclick="startGeneration()">
-          <span>🎬</span> Generate
-        </button>
-      </div>
-    </div>
-    <div class="error-banner" id="errorBanner"></div>
+    </section>
+
   </div>
-
-  <!-- Pipeline Progress -->
-  <div class="card" id="progressCard" style="display:none">
-    <h2>Pipeline Progress</h2>
-
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 14px;">
-      <span id="progressLabel" style="font-size:0.88rem; color:var(--muted)">Initializing…</span>
-      <span id="progressPct" style="font-size:0.88rem; font-weight:600; color:var(--accent)">0%</span>
-    </div>
-    <div class="progress-wrap" style="margin-bottom: 20px;">
-      <div class="progress-bar" id="progressBar" style="width:0%"></div>
-    </div>
-
-    <div class="steps" id="stepsContainer">
-      <!-- injected by JS -->
-    </div>
-
-    <!-- Result -->
-    <div class="result-box" id="resultBox">
-      <div class="result-emoji">🎉</div>
-      <div class="result-title">Video Ready!</div>
-      <div class="result-meta" id="resultMeta"></div>
-      <a id="downloadLink" href="#" class="btn btn-download" download>
-        ⬇ Download MP4
-      </a>
-    </div>
-  </div>
-
-  <!-- Log -->
-  <div class="card" id="logCard" style="display:none">
-    <h2>Live Log</h2>
-    <div class="log-box" id="logBox"></div>
-  </div>
-
-  <!-- Recent Projects -->
-  <div class="card">
-    <h2>Recent Projects</h2>
-    <div id="projectsContainer">
-      <div style="color:var(--muted); font-size:0.85rem;">Loading…</div>
-    </div>
-  </div>
-
-</div>
+</main>
 
 <script>
-const MODULE_LABELS = [
-  "",
-  "Research & Asset Discovery",
-  "Metadata Extraction",
-  "Script & Voiceover",
-  "Scene Orchestration",
-  "MoviePy Rendering",
-  "Quality Validation",
-];
+const MODULE_LABELS = ["","Research","Metadata","Script & TTS","Orchestration","Rendering","Validation"];
+let _sse = null, _projectId = null;
+let _approvedTopic = "";
+let _lastSuggestions = [];
 
-const MODULE_DESCS = [
-  "",
-  "Searching Pexels, Pixabay, Unsplash, Freesound",
-  "Extracting ffprobe / Pillow / librosa metadata",
-  "Generating script (LLM) + voiceover (TTS)",
-  "Matching assets to scenes, planning timeline",
-  "MoviePy v2.0 scenes · Ken Burns · color grade · CrossFadeIn",
-  "Running 10 quality checks, embedding metadata",
-];
-
-let _sse = null;
-let _projectId = null;
-
+// ---------------------------------------------------------------------------
+// Utility helpers
+// ---------------------------------------------------------------------------
 function showError(msg) {
   const el = document.getElementById("errorBanner");
-  el.textContent = msg;
-  el.classList.add("visible");
+  el.textContent = msg; el.classList.remove("hidden");
+}
+function hideError() { document.getElementById("errorBanner").classList.add("hidden"); }
+
+function formatElapsed(sec) {
+  if (!sec || sec < 0) return "0:00";
+  const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2,"0")}`;
 }
 
-function hideError() {
-  document.getElementById("errorBanner").classList.remove("visible");
-}
-
-function buildSteps() {
-  const container = document.getElementById("stepsContainer");
-  container.innerHTML = "";
-  for (let i = 1; i <= 6; i++) {
-    const div = document.createElement("div");
-    div.className = "step";
-    div.id = `step-${i}`;
-    div.innerHTML = `
-      <div class="step-icon" id="step-icon-${i}">${i}</div>
-      <div class="step-info">
-        <div class="step-name">${MODULE_LABELS[i]}</div>
-        <div class="step-label">${MODULE_DESCS[i]}</div>
-      </div>
-      <span class="step-badge badge-pending" id="step-badge-${i}">pending</span>
-    `;
-    container.appendChild(div);
-  }
-}
-
-function updateStep(num, status) {
-  const step = document.getElementById(`step-${num}`);
-  const icon = document.getElementById(`step-icon-${num}`);
-  const badge = document.getElementById(`step-badge-${num}`);
-  if (!step) return;
-
-  step.className = "step";
-  badge.className = "step-badge";
-
-  if (status === "running") {
-    step.classList.add("active");
-    badge.classList.add("badge-running");
-    badge.textContent = "running";
-    icon.textContent = "⟳";
-  } else if (status === "complete") {
-    step.classList.add("complete");
-    badge.classList.add("badge-complete");
-    badge.textContent = "complete";
-    icon.textContent = "✓";
-  } else if (status === "failed") {
-    step.classList.add("failed");
-    badge.classList.add("badge-failed");
-    badge.textContent = "failed";
-    icon.textContent = "✗";
-  } else {
-    badge.classList.add("badge-pending");
-    badge.textContent = "pending";
-    icon.textContent = num;
-  }
-}
-
-function updateProgress(currentModule, moduleStatuses) {
-  const done = Object.values(moduleStatuses).filter(s => s === "complete").length;
-  const pct = Math.round((done / 6) * 100);
-  document.getElementById("progressBar").style.width = pct + "%";
-  document.getElementById("progressPct").textContent = pct + "%";
-
-  if (currentModule >= 1 && currentModule <= 6) {
-    document.getElementById("progressLabel").textContent =
-      `Module ${currentModule}: ${MODULE_LABELS[currentModule]}`;
-  }
-
-  for (let i = 1; i <= 6; i++) {
-    const s = moduleStatuses[i];
-    if (s) {
-      updateStep(i, s);
-    } else if (i === currentModule) {
-      updateStep(i, "running");
-    }
-  }
-}
-
-function appendLog(lines) {
-  const box = document.getElementById("logBox");
-  lines.forEach(line => {
-    const span = document.createElement("div");
-    if (line.includes("✅") || line.includes("complete") || line.includes("🎉")) {
-      span.className = "log-line-success";
-    } else if (line.includes("❌") || line.includes("Error") || line.includes("failed")) {
-      span.className = "log-line-error";
-    } else if (line.includes("▶") || line.includes("Module") || line.includes("Running")) {
-      span.className = "log-line-info";
-    }
-    span.textContent = line;
-    box.appendChild(span);
+// ---------------------------------------------------------------------------
+// State management — show one state, hide the rest
+// ---------------------------------------------------------------------------
+function showState(state) {
+  ["stateSearch","stateSuggestions","stateApprove","progressArea"].forEach(id => {
+    document.getElementById(id).classList.add("hidden");
   });
-  box.scrollTop = box.scrollHeight;
+  document.getElementById(state).classList.remove("hidden");
+  hideError();
 }
 
+function goToSearch() {
+  showState("stateSearch");
+  document.getElementById("logArea").classList.add("hidden");
+}
+
+function goToSuggestions() {
+  showState("stateSuggestions");
+  // Re-show the cards if we already have suggestions
+  if (_lastSuggestions.length) {
+    document.getElementById("suggestionsLoading").classList.add("hidden");
+    document.getElementById("suggestionsGrid").classList.remove("hidden");
+    document.getElementById("customTopicArea").classList.remove("hidden");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// STATE 1 → STATE 2: Search topics
+// ---------------------------------------------------------------------------
+async function searchTopics() {
+  const query = document.getElementById("searchQuery").value.trim();
+  hideError();
+  if (!query) { showError("Please describe what you want to create."); return; }
+
+  const btn = document.getElementById("searchBtn");
+  btn.disabled = true; btn.textContent = "Searching..."; btn.classList.add("opacity-60");
+
+  showState("stateSuggestions");
+  document.getElementById("suggestionsLoading").classList.remove("hidden");
+  document.getElementById("suggestionsGrid").classList.add("hidden");
+  document.getElementById("customTopicArea").classList.add("hidden");
+
+  try {
+    const res = await fetch("/api/search-topics", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({query}),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) { showError(data.error || "Search failed"); goToSearch(); return; }
+
+    _lastSuggestions = data.suggestions || [];
+    renderSuggestions(_lastSuggestions);
+  } catch (e) {
+    showError("Cannot reach server. Is server.py running?");
+    goToSearch();
+  } finally {
+    btn.disabled = false; btn.textContent = "Find Topics"; btn.classList.remove("opacity-60");
+  }
+}
+
+function renderSuggestions(suggestions) {
+  const grid = document.getElementById("suggestionsGrid");
+  document.getElementById("suggestionsLoading").classList.add("hidden");
+  grid.classList.remove("hidden");
+  document.getElementById("customTopicArea").classList.remove("hidden");
+
+  grid.innerHTML = suggestions.map((s, i) => {
+    const sourceUrl = s.source || "";
+    const sourceDomain = sourceUrl ? new URL(sourceUrl).hostname.replace("www.","") : "";
+    const needsVerify = s.needs_verification ? `<span class="text-amber-400 text-[10px] font-bold ml-2">needs verification</span>` : "";
+    return `
+    <div class="bg-surface-highest/50 rounded-lg p-4 hover:bg-surface-highest transition-all cursor-pointer group" onclick="selectTopic(${i})">
+      <div class="flex items-start justify-between gap-3">
+        <div class="flex-1 min-w-0">
+          <h4 class="font-bold text-sm leading-tight">${s.title}${needsVerify}</h4>
+          <p class="text-muted text-xs mt-1 line-clamp-2">${s.angle || ""}</p>
+          <div class="flex items-center gap-2 mt-1.5">
+            ${s.why_viral ? `<span class="text-accent/60 text-[10px] font-medium">${s.why_viral}</span>` : ""}
+          </div>
+          ${sourceDomain ? `<a href="${sourceUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="text-[10px] text-muted-dim hover:text-accent mt-1 inline-block truncate max-w-[280px]">${sourceDomain}</a>` : ""}
+        </div>
+        <button class="shrink-0 px-3 py-1.5 bg-accent text-black text-[10px] font-black uppercase rounded-full opacity-0 group-hover:opacity-100 transition-all">
+          Select
+        </button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+// ---------------------------------------------------------------------------
+// STATE 2 → STATE 3: Select topic & generate hook
+// ---------------------------------------------------------------------------
+function selectTopic(index) {
+  const topic = _lastSuggestions[index]?.title || "";
+  if (topic) goToApprove(topic);
+}
+
+function selectCustomTopic() {
+  const topic = document.getElementById("customTopic").value.trim();
+  if (!topic) { showError("Please enter a topic."); return; }
+  goToApprove(topic);
+}
+
+async function goToApprove(topic) {
+  _approvedTopic = topic;
+  showState("stateApprove");
+  document.getElementById("approvedTopicDisplay").textContent = topic;
+  document.getElementById("hookTitle").value = "";
+
+  // Fetch viral hook
+  await fetchHook(topic);
+}
+
+async function fetchHook(topic) {
+  const hookInput = document.getElementById("hookTitle");
+  const hookLoading = document.getElementById("hookLoading");
+  hookLoading.classList.remove("hidden");
+  hookInput.placeholder = "Generating viral hook...";
+
+  try {
+    const res = await fetch("/api/generate-hook", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({topic}),
+    });
+    const data = await res.json();
+    hookInput.value = data.hook_title || topic;
+  } catch (e) {
+    hookInput.value = topic;
+  } finally {
+    hookLoading.classList.add("hidden");
+    hookInput.placeholder = "Enter video title...";
+  }
+}
+
+async function regenerateHook() {
+  await fetchHook(_approvedTopic);
+}
+
+// ---------------------------------------------------------------------------
+// STATE 3 → STATE 4: Generate video
+// ---------------------------------------------------------------------------
 async function startGeneration() {
-  const topic = document.getElementById("topic").value.trim();
+  const topic = _approvedTopic;
+  const hookTitle = document.getElementById("hookTitle").value.trim();
   const duration = parseFloat(document.getElementById("duration").value);
   hideError();
-
-  if (!topic) { showError("Please enter a topic."); return; }
+  if (!topic) { showError("No topic selected."); return; }
 
   const btn = document.getElementById("generateBtn");
-  btn.disabled = true;
-  btn.textContent = "Starting…";
+  btn.disabled = true; btn.textContent = "Generating..."; btn.classList.add("opacity-60");
 
-  // Reset UI
-  document.getElementById("progressCard").style.display = "block";
-  document.getElementById("logCard").style.display = "block";
-  document.getElementById("resultBox").classList.remove("visible");
+  // Hide approve state, show progress
+  document.getElementById("stateApprove").classList.add("hidden");
+  document.getElementById("progressArea").classList.remove("hidden");
+  document.getElementById("logArea").classList.remove("hidden");
   document.getElementById("logBox").innerHTML = "";
   document.getElementById("progressBar").style.width = "0%";
   document.getElementById("progressPct").textContent = "0%";
-  document.getElementById("progressLabel").textContent = "Initializing…";
+  document.getElementById("progressLabel").textContent = "Initializing...";
+  document.getElementById("liveTimer").classList.remove("hidden");
+  document.getElementById("liveStatus").classList.remove("hidden");
+  document.getElementById("liveStatus").textContent = "Generating...";
   buildSteps();
 
   if (_sse) { _sse.close(); _sse = null; }
 
-  // POST /api/generate
   let res;
   try {
     res = await fetch("/api/generate", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({topic, duration}),
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({topic, duration, hook_title: hookTitle}),
     });
   } catch (e) {
     showError("Cannot reach server. Is server.py running?");
-    btn.disabled = false;
-    btn.innerHTML = "<span>🎬</span> Generate";
-    return;
+    btn.disabled = false; btn.textContent = "Generate Video"; btn.classList.remove("opacity-60"); return;
   }
 
   const data = await res.json();
   if (!res.ok || data.error) {
     showError(data.error || "Server error");
-    btn.disabled = false;
-    btn.innerHTML = "<span>🎬</span> Generate";
-    return;
+    btn.disabled = false; btn.textContent = "Generate Video"; btn.classList.remove("opacity-60"); return;
   }
 
   _projectId = data.project_id;
-  btn.textContent = "Generating…";
+  const displayTitle = hookTitle || topic;
 
-  // Subscribe to SSE
   _sse = new EventSource(`/api/status/${_projectId}`);
   _sse.onmessage = (e) => {
-    const payload = JSON.parse(e.data);
+    const p = JSON.parse(e.data);
+    if (p.log && p.log.length) appendLog(p.log);
+    updateProgress(p.current_module, p.module_statuses || {}, p.elapsed_sec, p.module_timings);
 
-    if (payload.log && payload.log.length) appendLog(payload.log);
-    updateProgress(payload.current_module, payload.module_statuses || {});
-
-    if (payload.done) {
-      _sse.close();
-      _sse = null;
-      btn.disabled = false;
-      btn.innerHTML = "<span>🎬</span> Generate";
+    if (p.done) {
+      _sse.close(); _sse = null;
+      btn.disabled = false; btn.textContent = "Generate Video"; btn.classList.remove("opacity-60");
       document.getElementById("progressBar").style.width = "100%";
       document.getElementById("progressPct").textContent = "100%";
+      document.getElementById("elapsedTime").textContent = formatElapsed(p.elapsed_sec);
+      document.getElementById("liveStatus").textContent = p.success ? "Complete" : "Failed";
 
-      if (payload.success) {
-        document.getElementById("progressLabel").textContent = "✅ Complete!";
-        const resultBox = document.getElementById("resultBox");
-        const dl = document.getElementById("downloadLink");
-        dl.href = `/api/video/${_projectId}`;
-        dl.download = `${_projectId}.mp4`;
-        document.getElementById("resultMeta").textContent =
-          `Topic: ${topic} · ${duration} min`;
-        resultBox.classList.add("visible");
+      if (p.success) {
+        document.getElementById("progressLabel").textContent = `Complete in ${formatElapsed(p.elapsed_sec)}`;
+        playVideo(_projectId, displayTitle);
+        // Reset to search state for next video
+        setTimeout(() => {
+          _approvedTopic = "";
+          document.getElementById("searchQuery").value = "";
+          document.getElementById("hookTitle").value = "";
+          goToSearch();
+        }, 1000);
       } else {
-        document.getElementById("progressLabel").textContent = "❌ Failed";
-        showError(payload.error || "Pipeline failed. Check the log for details.");
+        document.getElementById("progressLabel").textContent = "Failed";
+        showError(p.error || "Pipeline failed.");
       }
       loadProjects();
     }
   };
-
-  _sse.onerror = () => {
-    appendLog(["[SSE] Connection lost — retrying…"]);
-  };
+  _sse.onerror = () => appendLog(["[SSE] Connection lost — retrying..."]);
 }
 
-// ── Projects Table ──
+// ---------------------------------------------------------------------------
+// Progress UI helpers (unchanged)
+// ---------------------------------------------------------------------------
+function buildSteps() {
+  const c = document.getElementById("stepsContainer"); c.innerHTML = "";
+  for (let i = 1; i <= 6; i++) {
+    c.innerHTML += `<div id="step-${i}" class="flex items-center space-x-3 py-1.5 px-2 rounded-lg">
+      <span id="step-icon-${i}" class="w-6 h-6 flex items-center justify-center rounded-full bg-surface-highest text-[10px] font-bold">${i}</span>
+      <span class="flex-1 text-xs font-medium text-muted">${MODULE_LABELS[i]}</span>
+      <span id="step-badge-${i}" class="text-[10px] font-bold uppercase tracking-widest text-muted-dim">pending</span>
+    </div>`;
+  }
+}
 
+function updateStep(num, status, dur) {
+  const icon = document.getElementById(`step-icon-${num}`);
+  const badge = document.getElementById(`step-badge-${num}`);
+  const row = document.getElementById(`step-${num}`);
+  if (!icon || !badge || !row) return;
+  const t = dur ? ` ${formatElapsed(dur)}` : "";
+  row.className = "flex items-center space-x-3 py-1.5 px-2 rounded-lg";
+  if (status === "running") {
+    icon.className = "w-6 h-6 flex items-center justify-center rounded-full bg-accent text-black text-[10px] font-bold animate-pulse"; icon.textContent = "\u27F3";
+    badge.className = "text-[10px] font-bold uppercase tracking-widest text-accent"; badge.textContent = "running";
+    row.classList.add("bg-accent/5");
+  } else if (status === "complete") {
+    icon.className = "w-6 h-6 flex items-center justify-center rounded-full bg-green-600 text-white text-[10px] font-bold"; icon.textContent = "\u2713";
+    badge.className = "text-[10px] font-bold uppercase tracking-widest text-green-500"; badge.textContent = `done${t}`;
+  } else if (status === "failed") {
+    icon.className = "w-6 h-6 flex items-center justify-center rounded-full bg-err text-white text-[10px] font-bold"; icon.textContent = "\u2717";
+    badge.className = "text-[10px] font-bold uppercase tracking-widest text-err"; badge.textContent = `failed${t}`;
+  }
+}
+
+function updateProgress(mod, statuses, elapsed, timings) {
+  const done = Object.values(statuses).filter(s => s === "complete").length;
+  const pct = Math.round((done / 6) * 100);
+  document.getElementById("progressBar").style.width = pct + "%";
+  document.getElementById("progressPct").textContent = pct + "%";
+  document.getElementById("elapsedTime").textContent = formatElapsed(elapsed);
+  document.getElementById("liveTimer").textContent = formatElapsed(elapsed);
+  if (mod >= 1 && mod <= 6) document.getElementById("progressLabel").textContent = MODULE_LABELS[mod];
+  for (let i = 1; i <= 6; i++) {
+    const s = statuses[i];
+    if (s) updateStep(i, s, timings && timings[i]);
+    else if (i === mod) updateStep(i, "running");
+  }
+}
+
+function appendLog(lines) {
+  const box = document.getElementById("logBox");
+  lines.forEach(l => {
+    const d = document.createElement("div");
+    if (l.includes("\u2705") || l.includes("\uD83C\uDF89")) d.className = "text-green-500";
+    else if (l.includes("\u274C") || l.includes("failed")) d.className = "text-err";
+    else if (l.includes("\u25B6")) d.className = "text-accent";
+    d.textContent = l; box.appendChild(d);
+  });
+  box.scrollTop = box.scrollHeight;
+}
+
+// ---------------------------------------------------------------------------
+// Video preview & playback
+// ---------------------------------------------------------------------------
+function previewProject(projectId, title) {
+  const player = document.getElementById("videoPlayer");
+  const placeholder = document.getElementById("videoPlaceholder");
+  const overlay = document.getElementById("playOverlay");
+  player.pause(); player.removeAttribute("src"); player.controls = false;
+  player.poster = `/api/thumbnail/${projectId}`;
+  player.classList.remove("hidden"); placeholder.classList.add("hidden");
+  overlay.classList.remove("hidden");
+  document.getElementById("videoTitle").textContent = title || projectId;
+  document.getElementById("videoLabel").textContent = "Preview";
+  const dl = document.getElementById("playerDownloadBtn");
+  dl.href = `/api/video/${projectId}`; dl.download = `${projectId}.mp4`; dl.classList.remove("hidden");
+  player.dataset.projectId = projectId;
+  player.dataset.topic = title || projectId;
+}
+
+function onPlayOverlayClick() {
+  const player = document.getElementById("videoPlayer");
+  if (player.dataset.projectId) {
+    playVideo(player.dataset.projectId, player.dataset.topic);
+  }
+}
+
+function playVideo(projectId, title) {
+  const player = document.getElementById("videoPlayer");
+  const placeholder = document.getElementById("videoPlaceholder");
+  const overlay = document.getElementById("playOverlay");
+  overlay.classList.add("hidden");
+  player.controls = true;
+  player.poster = `/api/thumbnail/${projectId}`;
+  player.src = `/api/video/${projectId}/stream`;
+  player.classList.remove("hidden"); placeholder.classList.add("hidden");
+  document.getElementById("videoTitle").textContent = title || projectId;
+  document.getElementById("videoLabel").textContent = "Now Playing";
+  const dl = document.getElementById("playerDownloadBtn");
+  dl.href = `/api/video/${projectId}`; dl.download = `${projectId}.mp4`; dl.classList.remove("hidden");
+  player.load(); player.play().catch(() => {});
+}
+
+// ---------------------------------------------------------------------------
+// Project library — show script_title (viral hook) as display title
+// ---------------------------------------------------------------------------
 async function loadProjects() {
   const res = await fetch("/api/projects");
   const projects = await res.json();
-  const container = document.getElementById("projectsContainer");
+  const c = document.getElementById("projectsContainer");
 
-  if (!projects.length) {
-    container.innerHTML = `<div style="color:var(--muted);font-size:0.85rem;">No projects yet.</div>`;
-    return;
-  }
+  if (!projects.length) { c.innerHTML = `<p class="text-muted text-sm col-span-full">No projects yet. Create your first reel above.</p>`; return; }
 
-  const rows = projects.slice().reverse().map(p => {
-    const date = p.created_at ? p.created_at.slice(0, 10) : "—";
-    const badge = p.has_video
-      ? `<span class="pill pill-green">✓ Ready</span>`
-      : `<span class="pill pill-gray">In progress</span>`;
-    const dlBtn = p.has_video
-      ? `<a href="/api/video/${p.id}" download="${p.id}.mp4" class="link-btn">⬇ Download</a>`
-      : `<span style="color:var(--muted);font-size:0.78rem;">—</span>`;
-    return `
-      <tr id="row-${p.id}">
-        <td>${p.topic}</td>
-        <td>${p.duration_min} min</td>
-        <td>${date}</td>
-        <td>${badge}</td>
-        <td>${dlBtn}</td>
-        <td><button class="del-btn" onclick="deleteProject('${p.id}')">🗑 Delete</button></td>
-      </tr>`;
+  c.innerHTML = projects.slice().sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")).map(p => {
+    const displayTitle = p.script_title || p.topic;
+    const date = p.created_at ? p.created_at.slice(0, 10) : "\u2014";
+    const elapsed = p.pipeline_elapsed_sec ? formatElapsed(p.pipeline_elapsed_sec) : "";
+    const escapedTitle = displayTitle.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+    const isReady = p.has_video;
+    const statusBadge = isReady
+      ? `<span class="bg-green-600/90 text-white text-[10px] font-black px-2 py-0.5 rounded tracking-widest uppercase">Ready</span>`
+      : `<span class="bg-amber-500/90 text-white text-[10px] font-black px-2 py-0.5 rounded tracking-widest uppercase">Processing</span>`;
+    const thumb = isReady ? `/api/thumbnail/${p.id}` : "";
+    const thumbBg = thumb ? `background-image:url('${thumb}'); background-size:cover; background-position:center;` : "background:#131313;";
+
+    return `<div class="bg-surface-container rounded-lg p-4 flex flex-col space-y-3 hover:bg-surface-high transition-colors group">
+      <div class="h-36 rounded-lg overflow-hidden relative cursor-pointer" style="${thumbBg}" ${isReady ? `onclick="previewProject('${p.id}','${escapedTitle}')"` : ""}>
+        ${!isReady ? `<div class="absolute inset-0 flex items-center justify-center bg-black/50"><div class="w-10 h-10 border-3 border-accent border-t-transparent rounded-full animate-spin"></div></div>` : `<div class="absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity"><span class="material-symbols-outlined text-white/70 text-3xl">visibility</span></div>`}
+        <div class="absolute top-2 right-2">${statusBadge}</div>
+        ${elapsed ? `<div class="absolute bottom-2 left-2 bg-black/70 text-[10px] text-muted px-2 py-0.5 rounded font-mono">${elapsed}</div>` : ""}
+      </div>
+      <div class="flex justify-between items-start">
+        <div class="flex-1 min-w-0 mr-3">
+          <h4 class="font-bold text-sm leading-tight truncate">${displayTitle}</h4>
+          <p class="text-[10px] text-muted mt-0.5">${date} \u00B7 ${p.duration_min} min</p>
+        </div>
+        <div class="flex space-x-1.5 shrink-0">
+          ${isReady ? `<button onclick="playVideo('${p.id}','${escapedTitle}')" class="p-1.5 bg-surface-highest hover:bg-accent hover:text-black rounded-full transition-all" title="Play">
+            <span class="material-symbols-outlined text-sm">play_arrow</span>
+          </button>
+          <a href="/api/video/${p.id}" download="${p.id}.mp4" class="p-1.5 bg-surface-highest hover:bg-white hover:text-black rounded-full transition-all inline-flex" title="Download">
+            <span class="material-symbols-outlined text-sm">download</span>
+          </a>` : ""}
+          <button onclick="deleteProject('${p.id}')" class="p-1.5 bg-surface-highest hover:bg-err hover:text-white rounded-full transition-all" title="Delete">
+            <span class="material-symbols-outlined text-sm">delete</span>
+          </button>
+        </div>
+      </div>
+    </div>`;
   }).join("");
-
-  container.innerHTML = `
-    <table class="proj-table">
-      <thead>
-        <tr>
-          <th>Topic</th>
-          <th>Duration</th>
-          <th>Created</th>
-          <th>Status</th>
-          <th>Download</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>`;
 }
 
-// ── Delete Project ──
-
-async function deleteProject(projectId) {
-  if (!confirm(`Delete project "${projectId}" and all its files?\n\nThis cannot be undone.`)) return;
-
-  // Immediately grey out the row for instant feedback
-  const row = document.getElementById(`row-${projectId}`);
-  if (row) row.style.opacity = "0.4";
-
+async function deleteProject(id) {
+  if (!confirm(`Delete "${id}" and all files?`)) return;
   try {
-    const res = await fetch(`/api/projects/${projectId}`, { method: "DELETE" });
-    if (res.ok) {
-      // Fade row out then reload table
-      if (row) {
-        row.style.transition = "opacity 0.3s";
-        row.style.opacity = "0";
-        setTimeout(loadProjects, 320);
-      } else {
-        loadProjects();
-      }
-    } else {
-      const body = await res.json().catch(() => ({}));
-      alert(`Delete failed: ${body.error || res.statusText}`);
-      if (row) row.style.opacity = "1";
-    }
-  } catch (err) {
-    alert(`Delete failed: ${err.message}`);
-    if (row) row.style.opacity = "1";
-  }
+    const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
+    if (res.ok) loadProjects();
+    else showError("Delete failed");
+  } catch (e) { showError("Delete failed: " + e.message); }
 }
+
+// Allow Enter key in search box to trigger search
+document.getElementById("searchQuery").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); searchTopics(); }
+});
 
 // Init
 loadProjects();
-setInterval(loadProjects, 15000);
 </script>
 </body>
 </html>
