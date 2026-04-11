@@ -74,7 +74,7 @@ def fake_api_keys():
 class TestProductionPlanModel:
     def test_default_values(self):
         plan = ProductionPlan(topic="Test Topic")
-        assert plan.narrator_voice == "en-US-GuyNeural"
+        assert plan.narrator_voice == "en-US-AriaNeural"
         assert plan.tone in ("educational", "documentary", ToneStyle.DOCUMENTARY)
         assert plan.visual_style == VisualStyleChoice.DOCUMENTARY
         assert plan.target_audience == "general audience"

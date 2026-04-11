@@ -138,7 +138,9 @@ def test_llm_failure_falls_back_to_templates():
         "OPENROUTER_API_KEY": "fake-key",
     })
 
-    with patch("requests.post", side_effect=Exception("Network error")):
+    mock_inst = MagicMock()
+    mock_inst.post.side_effect = Exception("Network error")
+    with patch("src.utils.llm_client.requests.Session", return_value=mock_inst):
         hooks = engine.generate_hooks("Climate Change", "dramatic", "general")
 
     assert len(hooks) >= 1
@@ -159,7 +161,9 @@ def test_llm_bad_json_falls_back_to_templates():
         "choices": [{"message": {"content": "This is not JSON at all!"}}]
     }
 
-    with patch("requests.post", return_value=bad_response):
+    mock_inst = MagicMock()
+    mock_inst.post.return_value = bad_response
+    with patch("src.utils.llm_client.requests.Session", return_value=mock_inst):
         hooks = engine.generate_hooks("Robotics", "educational", "students")
 
     assert len(hooks) >= 1

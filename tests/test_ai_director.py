@@ -144,10 +144,12 @@ class TestScriptDirector:
             "choices": [{"message": {"content": revised_json}}]
         }
 
-        with patch("requests.post", return_value=mock_resp) as mock_post:
+        mock_inst = MagicMock()
+        mock_inst.post.return_value = mock_resp
+        with patch("src.utils.llm_client.requests.Session", return_value=mock_inst):
             result = director.review(script)
 
-        call_kwargs = mock_post.call_args
+        call_kwargs = mock_inst.post.call_args
         assert "openrouter.ai" in call_kwargs[0][0]
         assert isinstance(result, Script)
 
@@ -195,7 +197,9 @@ class TestScriptDirector:
             "choices": [{"message": {"content": revised_json}}]
         }
 
-        with patch("requests.post", return_value=mock_resp):
+        mock_inst = MagicMock()
+        mock_inst.post.return_value = mock_resp
+        with patch("src.utils.llm_client.requests.Session", return_value=mock_inst):
             result = director.review(script)
 
         for orig, rev in zip(script.segments, result.segments):
@@ -212,7 +216,9 @@ class TestScriptDirector:
             "choices": [{"message": {"content": "not json at all {{"}}]
         }
 
-        with patch("requests.post", return_value=mock_resp):
+        mock_inst = MagicMock()
+        mock_inst.post.return_value = mock_resp
+        with patch("src.utils.llm_client.requests.Session", return_value=mock_inst):
             result = director.review(script)
 
         # Should return the original without raising
@@ -225,7 +231,9 @@ class TestScriptDirector:
         director = ScriptDirector(api_keys=_API_KEYS_WITH_OR)
         script = _make_script()
 
-        with patch("requests.post", side_effect=req.ConnectionError("timeout")):
+        mock_inst = MagicMock()
+        mock_inst.post.side_effect = req.ConnectionError("timeout")
+        with patch("src.utils.llm_client.requests.Session", return_value=mock_inst):
             result = director.review(script)
 
         assert isinstance(result, Script)
@@ -262,11 +270,13 @@ class TestScriptDirector:
             "choices": [{"message": {"content": revised_json}}]
         }
 
-        with patch("requests.post", return_value=mock_resp) as mock_post:
+        mock_inst = MagicMock()
+        mock_inst.post.return_value = mock_resp
+        with patch("src.utils.llm_client.requests.Session", return_value=mock_inst):
             director.review(script)
 
         # 2 passes → 2 POST calls
-        assert mock_post.call_count == 2
+        assert mock_inst.post.call_count == 2
 
 
 # ---------------------------------------------------------------------------

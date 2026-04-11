@@ -231,7 +231,7 @@ class ScriptSegment(BaseModel):
     # AI image prompt — scene-specific SDXL prompt for cinematic image generation
     sdxl_prompt: Optional[str] = None
 
-    # Voice casting — edge-tts voice name (e.g. "en-US-GuyNeural")
+    # Voice casting — edge-tts voice name (e.g. "en-US-AriaNeural")
     voice: Optional[str] = None
 
     # Populated after voiceover generation
@@ -251,7 +251,7 @@ class Script(BaseModel):
     overall_pacing: str = "medium"
 
     # Voice casting
-    narrator_voice: str = "en-US-GuyNeural"
+    narrator_voice: str = "en-US-AriaNeural"
     testimonial_voices: list[str] = Field(default_factory=list)
 
     # Populated after voiceover
@@ -358,7 +358,7 @@ class ProductionPlan(BaseModel):
     tone: str = "educational"               # educational | dramatic | uplifting | suspenseful
     mood: Mood = Mood.NEUTRAL
     color_palette: list[str] = Field(default_factory=list)
-    narrator_voice: str = "en-US-GuyNeural"  # Edge TTS voice ID
+    narrator_voice: str = "en-US-AriaNeural"  # Edge TTS voice ID
     testimonial_voices: list[str] = Field(default_factory=list)
     search_keywords: list[str] = Field(default_factory=list)
     image_search_queries: list[str] = Field(default_factory=list)

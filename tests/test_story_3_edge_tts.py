@@ -114,7 +114,7 @@ def test_script_segment_voice_defaults_to_none():
 
 def test_script_narrator_voice_default():
     script = Script(title="T", topic="T", duration_sec=60)
-    assert script.narrator_voice == "en-US-GuyNeural"
+    assert script.narrator_voice == "en-US-AriaNeural"
 
 
 def test_script_narrator_voice_customisable():
@@ -140,11 +140,11 @@ def test_script_testimonial_voices_stored():
 
 
 # ---------------------------------------------------------------------------
-# edge-tts is the primary engine
+# edge-tts in the fallback chain (after Kokoro)
 # ---------------------------------------------------------------------------
 
 def test_edge_tts_called_first(tmp_project):
-    """edge-tts _edge_tts() must be called before piper or macOS say."""
+    """When Kokoro is unavailable, _edge_tts runs before piper or macOS say."""
     module = ScriptModule(tmp_project)
     call_order = []
 
@@ -156,8 +156,11 @@ def test_edge_tts_called_first(tmp_project):
         call_order.append("piper")
         _make_fake_wav(out_path)
 
-    with patch.object(module, "_edge_tts", side_effect=fake_edge_tts), \
-         patch.object(module, "_piper_tts", side_effect=fake_piper):
+    with (
+        patch.object(module, "_kokoro_tts", side_effect=RuntimeError("skip kokoro")),
+        patch.object(module, "_edge_tts", side_effect=fake_edge_tts),
+        patch.object(module, "_piper_tts", side_effect=fake_piper),
+    ):
         module.generate_voiceover_segment("Hello test.", 1)
 
     assert call_order == ["edge_tts"], "edge-tts should be the only engine called when it succeeds"
@@ -172,7 +175,10 @@ def test_edge_tts_receives_segment_voice(tmp_project):
         received_voice.append(voice)
         _make_fake_wav(out_path)
 
-    with patch.object(module, "_edge_tts", side_effect=fake_edge_tts):
+    with (
+        patch.object(module, "_kokoro_tts", side_effect=RuntimeError("skip kokoro")),
+        patch.object(module, "_edge_tts", side_effect=fake_edge_tts),
+    ):
         module.generate_voiceover_segment("Hello test.", 1, voice="en-GB-SoniaNeural")
 
     assert received_voice == ["en-GB-SoniaNeural"]
@@ -187,7 +193,10 @@ def test_default_voice_used_when_none_specified(tmp_project):
         received_voice.append(voice)
         _make_fake_wav(out_path)
 
-    with patch.object(module, "_edge_tts", side_effect=fake_edge_tts):
+    with (
+        patch.object(module, "_kokoro_tts", side_effect=RuntimeError("skip kokoro")),
+        patch.object(module, "_edge_tts", side_effect=fake_edge_tts),
+    ):
         module.generate_voiceover_segment("Hello test.", 1)
 
     assert received_voice == [DEFAULT_NARRATOR_VOICE]
@@ -210,8 +219,11 @@ def test_falls_back_to_piper_when_edge_tts_fails(tmp_project):
         call_order.append("piper")
         _make_fake_wav(out_path)
 
-    with patch.object(module, "_edge_tts", side_effect=fake_edge_tts), \
-         patch.object(module, "_piper_tts", side_effect=fake_piper):
+    with (
+        patch.object(module, "_kokoro_tts", side_effect=RuntimeError("skip kokoro")),
+        patch.object(module, "_edge_tts", side_effect=fake_edge_tts),
+        patch.object(module, "_piper_tts", side_effect=fake_piper),
+    ):
         out = module.generate_voiceover_segment("Hello test.", 2)
 
     assert call_order == ["edge_tts", "piper"]
@@ -235,9 +247,12 @@ def test_falls_back_to_macos_say_when_piper_fails(tmp_project):
         call_order.append("macos_say")
         _make_fake_wav(out_path)
 
-    with patch.object(module, "_edge_tts", side_effect=fake_edge_tts), \
-         patch.object(module, "_piper_tts", side_effect=fake_piper), \
-         patch.object(module, "_macos_say_fallback", side_effect=fake_say):
+    with (
+        patch.object(module, "_kokoro_tts", side_effect=RuntimeError("skip kokoro")),
+        patch.object(module, "_edge_tts", side_effect=fake_edge_tts),
+        patch.object(module, "_piper_tts", side_effect=fake_piper),
+        patch.object(module, "_macos_say_fallback", side_effect=fake_say),
+    ):
         out = module.generate_voiceover_segment("Hello test.", 3)
 
     assert call_order == ["edge_tts", "piper", "macos_say"]
@@ -266,7 +281,10 @@ def test_narrator_voice_propagates_to_segments_without_voice(tmp_project):
         ],
     )
 
-    with patch.object(module, "_edge_tts", side_effect=fake_edge_tts):
+    with (
+        patch.object(module, "_kokoro_tts", side_effect=RuntimeError("skip kokoro")),
+        patch.object(module, "_edge_tts", side_effect=fake_edge_tts),
+    ):
         module.generate_all_voiceovers(script)
 
     assert received_voices == ["en-US-ChristopherNeural", "en-US-ChristopherNeural"]
@@ -293,7 +311,10 @@ def test_per_segment_voice_overrides_narrator_voice(tmp_project):
         ],
     )
 
-    with patch.object(module, "_edge_tts", side_effect=fake_edge_tts):
+    with (
+        patch.object(module, "_kokoro_tts", side_effect=RuntimeError("skip kokoro")),
+        patch.object(module, "_edge_tts", side_effect=fake_edge_tts),
+    ):
         module.generate_all_voiceovers(script)
 
     assert received_voices[0] == "en-US-GuyNeural"    # narrator

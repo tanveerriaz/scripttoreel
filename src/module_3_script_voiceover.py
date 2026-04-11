@@ -24,10 +24,10 @@ from pydub import AudioSegment
 
 # Available edge-tts neural voices for casting
 AVAILABLE_VOICES = [
-    "en-US-GuyNeural",          # Deep, documentary narrator (default)
+    "en-US-GuyNeural",          # Deep, documentary male narrator
     "en-US-ChristopherNeural",  # Authoritative male
     "en-US-JennyNeural",        # Friendly female
-    "en-US-AriaNeural",         # Expressive female
+    "en-US-AriaNeural",         # Expressive female (default narrator)
     "en-GB-RyanNeural",         # British male
     "en-GB-SoniaNeural",        # British female
 ]
@@ -48,7 +48,7 @@ _KOKORO_VOICE_MAP: dict[str, str] = {
     "en-GB-RyanNeural":        "bm_george",  # British male
     "en-GB-SoniaNeural":       "bf_emma",    # British female
 }
-_KOKORO_DEFAULT_VOICE = "am_adam"
+_KOKORO_DEFAULT_VOICE = "af_bella"  # matches DEFAULT_NARRATOR_VOICE (en-US-AriaNeural)
 
 from src.project_manager import update_pipeline_status
 from src.utils.config_loader import load_api_keys, load_script_prompts

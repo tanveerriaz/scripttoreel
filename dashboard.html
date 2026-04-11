@@ -89,7 +89,7 @@ body { font-family: 'Inter', sans-serif; }
 
       <!-- Create Card -->
       <section class="col-span-12 lg:col-span-7 bg-surface-low rounded-xl p-7 relative overflow-hidden">
-        <div class="absolute top-0 right-0 -mr-16 -mt-16 w-64 h-64 bg-accent/10 blur-[100px]"></div>
+        <div class="pointer-events-none absolute top-0 right-0 -mr-16 -mt-16 w-64 h-64 bg-accent/10 blur-[100px]" aria-hidden="true"></div>
         <h2 class="text-3xl font-black tracking-tight mb-6">CREATE <span class="text-accent">NEW REEL</span></h2>
         <div class="space-y-5">
 
@@ -111,7 +111,7 @@ body { font-family: 'Inter', sans-serif; }
           <div id="stateSuggestions" class="hidden space-y-4">
             <div class="flex items-center justify-between">
               <span class="text-[10px] font-bold uppercase tracking-widest text-muted">Suggested Topics</span>
-              <button onclick="goToSearch()" class="text-[10px] font-bold uppercase tracking-widest text-accent hover:underline">Back</button>
+              <button type="button" onclick="goToSearch()" class="relative z-10 text-[10px] font-bold uppercase tracking-widest text-accent hover:underline">Back</button>
             </div>
 
             <!-- Loading spinner -->
@@ -137,7 +137,7 @@ body { font-family: 'Inter', sans-serif; }
           <div id="stateApprove" class="hidden space-y-5">
             <div class="flex items-center justify-between">
               <span class="text-[10px] font-bold uppercase tracking-widest text-muted">Review & Generate</span>
-              <button onclick="goToSuggestions()" class="text-[10px] font-bold uppercase tracking-widest text-accent hover:underline">Change Topic</button>
+              <button type="button" onclick="goToSuggestions()" class="relative z-10 text-[10px] font-bold uppercase tracking-widest text-accent hover:underline">Change Topic</button>
             </div>
 
             <div class="space-y-1.5">

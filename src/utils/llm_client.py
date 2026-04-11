@@ -7,6 +7,7 @@ Model is read from OPENROUTER_MODEL in config/api_keys.env.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Optional
 
 import requests
@@ -17,6 +18,16 @@ logger = logging.getLogger(__name__)
 
 _OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 _DEFAULT_MODEL  = "anthropic/claude-sonnet-4-5"
+
+
+def _openrouter_trust_env() -> bool:
+    """Honor HTTP(S)_PROXY only when OPENROUTER_USE_SYSTEM_PROXY is enabled.
+
+    Many environments set a global proxy (VPN, IDE, old shell config) that returns
+    403 for CONNECT to api hosts. OpenRouter calls default to a direct connection.
+    """
+    v = os.environ.get("OPENROUTER_USE_SYSTEM_PROXY", "").strip().lower()
+    return v in ("1", "true", "yes", "on")
 
 
 def call_llm(
@@ -42,7 +53,9 @@ def call_llm(
     model = keys.get("OPENROUTER_MODEL", _DEFAULT_MODEL)
     logger.info("LLM → OpenRouter  model=%s", model)
 
-    resp = requests.post(
+    session = requests.Session()
+    session.trust_env = _openrouter_trust_env()
+    resp = session.post(
         _OPENROUTER_URL,
         headers={
             "Authorization": f"Bearer {api_key}",

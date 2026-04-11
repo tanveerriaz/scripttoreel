@@ -180,7 +180,7 @@ class AIDirector:
             tone="educational",
             mood=Mood.EDUCATIONAL,
             color_palette=["#0d1117", "#1f6feb", "#58a6ff"],
-            narrator_voice="en-US-GuyNeural",
+            narrator_voice="en-US-AriaNeural",
             search_keywords=keywords,
             scene_breakdown=[
                 "Scene 1: Open with striking visuals of the topic",

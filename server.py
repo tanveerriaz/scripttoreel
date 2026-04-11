@@ -59,7 +59,9 @@ MODULE_NAMES = {
 
 @app.route("/")
 def index():
-    return send_from_directory(str(ROOT), "dashboard.html")
+    resp = send_from_directory(str(ROOT), "dashboard.html")
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return resp
 
 
 @app.route("/assets/<path:subpath>")
