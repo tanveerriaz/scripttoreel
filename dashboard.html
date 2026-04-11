@@ -648,7 +648,7 @@ async function loadProjects() {
           <a href="/api/video/${p.id}" download="${p.id}.mp4" class="p-1.5 bg-surface-highest hover:bg-white hover:text-black rounded-full transition-all inline-flex" title="Download">
             <span class="material-symbols-outlined text-sm">download</span>
           </a>` : ""}
-          <button onclick="deleteProject('${p.id}')" class="p-1.5 bg-surface-highest hover:bg-err hover:text-white rounded-full transition-all" title="Delete">
+          <button onclick="deleteProject('${p.id}','${escapedTitle}')" class="p-1.5 bg-surface-highest hover:bg-err hover:text-white rounded-full transition-all" title="Delete">
             <span class="material-symbols-outlined text-sm">delete</span>
           </button>
         </div>
@@ -657,14 +657,18 @@ async function loadProjects() {
   }).join("");
 }
 
-async function deleteProject(id) {
-  if (!confirm(`Delete "${id}" and all files?`)) return;
+async function deleteProject(id, displayTitle) {
+  const label = displayTitle || id;
+  if (!confirm(`Delete "${label}"?\n\nThis will permanently remove all files.`)) return;
   try {
     const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
     if (res.ok) {
       if (_currentPage === "archive") loadArchive();
       else loadProjects();
-    } else showError("Delete failed");
+    } else {
+      const data = await res.json().catch(() => ({}));
+      showError(data.error || "Delete failed");
+    }
   } catch (e) { showError("Delete failed: " + e.message); }
 }
 
@@ -759,7 +763,7 @@ async function loadArchive() {
           <a href="/api/video/${p.id}" download="${p.id}.mp4" class="p-1.5 bg-surface-highest hover:bg-white hover:text-black rounded-full transition-all inline-flex" title="Download">
             <span class="material-symbols-outlined text-sm">download</span>
           </a>
-          <button onclick="deleteProject('${p.id}')" class="p-1.5 bg-surface-highest hover:bg-err hover:text-white rounded-full transition-all" title="Delete">
+          <button onclick="deleteProject('${p.id}','${escapedTitle}')" class="p-1.5 bg-surface-highest hover:bg-err hover:text-white rounded-full transition-all" title="Delete">
             <span class="material-symbols-outlined text-sm">delete</span>
           </button>
         </div>

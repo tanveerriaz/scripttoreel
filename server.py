@@ -108,7 +108,7 @@ def search_topics():
     search_context = ""
     search_failed = False
     try:
-        from duckduckgo_search import DDGS
+        from ddgs import DDGS
         ddgs = DDGS()
         # Try news search first — returns real, recent, sourced articles
         try:
@@ -145,25 +145,25 @@ def search_topics():
         logger.warning("DuckDuckGo search failed: %s — falling back to LLM only", e)
         search_failed = True
 
-    # Step 2: LLM selects and reframes REAL stories from search results
+    # Step 2: LLM selects and reframes REAL stories from search results (or suggests angles if no results)
     logger.info("Search results fed to LLM:\n%s", search_context[:500] if search_context else "(none)")
-    system_prompt = (
-        "You are a video topic curator. You MUST ONLY use information from the search results below. "
-        "Do NOT generate topics from your own knowledge.\n\n"
-        "RULES:\n"
-        "1. Each topic MUST correspond to a specific numbered search result [1], [2], etc.\n"
-        "2. Copy the exact source URL from that search result into the 'source' field.\n"
-        "3. The 'angle' field must summarize what the search result actually says — no embellishment.\n"
-        "4. You may write a catchy 'title', but it must accurately reflect the source content.\n"
-        "5. Do NOT invent any facts, names, statistics, or events not in the search results.\n"
-        "6. Pick 3-5 of the most interesting results.\n\n"
-        "Return ONLY a JSON array (no other text):\n"
-        "[{\"title\": \"catchy title based on the real story\", "
-        "\"angle\": \"summary of what the article actually reports\", "
-        "\"why_viral\": \"why this would make a good video\", "
-        "\"source\": \"exact URL from the search result\"}]"
-    )
     if search_context:
+        system_prompt = (
+            "You are a video topic curator. You MUST ONLY use information from the search results provided. "
+            "Do NOT generate topics from your own knowledge.\n\n"
+            "RULES:\n"
+            "1. Each topic MUST correspond to a specific numbered search result [1], [2], etc.\n"
+            "2. Copy the exact source URL from that search result into the 'source' field.\n"
+            "3. The 'angle' field must summarize what the search result actually says — no embellishment.\n"
+            "4. You may write a catchy 'title', but it must accurately reflect the source content.\n"
+            "5. Do NOT invent any facts, names, statistics, or events not in the search results.\n"
+            "6. Pick 3-5 of the most interesting results.\n\n"
+            "Return ONLY a JSON array (no other text):\n"
+            "[{\"title\": \"catchy title based on the real story\", "
+            "\"angle\": \"summary of what the article actually reports\", "
+            "\"why_viral\": \"why this would make a good video\", "
+            "\"source\": \"exact URL from the search result\"}]"
+        )
         user_prompt = (
             f"User searched for: \"{query}\"\n\n"
             f"SEARCH RESULTS:\n{search_context}\n\n"
@@ -172,13 +172,21 @@ def search_topics():
             "Do NOT add information beyond what the search results contain."
         )
     else:
-        # No search results — cannot guarantee factual topics
+        # No search results — ask LLM to brainstorm angles (clearly labelled as unverified)
+        system_prompt = (
+            "You are a creative video topic strategist. Web search returned no results, "
+            "so your job is to brainstorm 4-5 compelling video angle ideas based on the user's topic. "
+            "Be creative, specific, and think about what would perform well on YouTube or social media. "
+            "Mark every suggestion with \"needs_verification\": true since these are ideas, not sourced facts.\n\n"
+            "Return ONLY a JSON array (no other text):\n"
+            "[{\"title\": \"punchy video title\", \"angle\": \"specific angle or hook for this video\", "
+            "\"why_viral\": \"why this angle would get clicks\", \"needs_verification\": true}]"
+        )
         user_prompt = (
-            f"User wants to create a video about: \"{query}\"\n\n"
-            "I could not retrieve web search results. Suggest 3-5 GENERAL topic angles "
-            "the user could research further. Mark each with \"needs_verification\": true "
-            "since these are not backed by specific sources. "
-            "Do NOT present any specific facts, statistics, or claims as real."
+            f"Topic: \"{query}\"\n\n"
+            "Suggest 4-5 specific, engaging video angles on this topic. "
+            "Think about what sub-topics, controversies, trends, or surprising angles would make someone stop scrolling. "
+            "Each title should be punchy and specific — not generic."
         )
 
     try:
@@ -254,16 +262,36 @@ def generate():
         capture_output=True, text=True, cwd=str(ROOT)
     )
     if result.returncode != 0:
-        return jsonify({"error": result.stderr or "init failed"}), 500
+        logger.error("--init failed (rc=%d): %s", result.returncode, result.stderr or result.stdout)
+        return jsonify({"error": result.stderr or result.stdout or "init failed"}), 500
 
-    # Parse project_id from output
+    # Parse project_id from output — "   Project ID : <slug>"
     project_id = None
     for line in result.stdout.splitlines():
         if "Project ID" in line:
-            project_id = line.split(":")[-1].strip()
+            # Everything after the last ":" is the slug (safe: slugs never contain colons)
+            parts = line.split(":", 1)
+            if len(parts) == 2:
+                project_id = parts[1].strip()
             break
+
+    # Fallback: derive slug from topic the same way project_manager.slug_from_topic() does
     if not project_id:
-        return jsonify({"error": "could not determine project_id"}), 500
+        import re as _re
+        base = _re.sub(r"[^a-z0-9\s]", "", topic.lower())
+        base = _re.sub(r"\s+", "_", base.strip())
+        base = _re.sub(r"_+", "_", base)
+        # Account for _2, _3 … duplicate suffix
+        candidate = base
+        for suffix in [""] + [f"_{n}" for n in range(2, 20)]:
+            candidate = base + suffix
+            if (ROOT / "projects" / candidate).exists():
+                project_id = candidate
+                break
+        if not project_id:
+            logger.error("--init stdout: %r", result.stdout[:500])
+            return jsonify({"error": "could not determine project_id"}), 500
+        logger.warning("project_id inferred from slug fallback: %s", project_id)
 
     # Write hook title to project.json as script_title
     if hook_title:
