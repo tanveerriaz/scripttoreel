@@ -49,15 +49,15 @@ body { font-family: 'Inter', sans-serif; }
     <p class="text-[10px] text-muted mt-1 font-bold uppercase tracking-widest">AI Video Generator</p>
   </div>
   <nav class="flex-1 space-y-1">
-    <div class="bg-accent text-black rounded-full mx-3 py-2.5 px-5 flex items-center space-x-3 cursor-pointer">
+    <div id="navDashboard" onclick="setPage('dashboard')" class="bg-accent text-black rounded-full mx-3 py-2.5 px-5 flex items-center space-x-3 cursor-pointer transition-all">
       <span class="material-symbols-outlined text-sm">grid_view</span>
       <span class="text-xs font-bold uppercase tracking-widest">Dashboard</span>
     </div>
-    <div class="text-muted mx-3 py-2.5 px-5 flex items-center space-x-3 cursor-pointer hover:bg-surface-highest rounded-full transition-all">
+    <div id="navCreate" onclick="setPage('create')" class="text-muted mx-3 py-2.5 px-5 flex items-center space-x-3 cursor-pointer hover:bg-surface-highest rounded-full transition-all">
       <span class="material-symbols-outlined text-sm">add_circle</span>
       <span class="text-xs font-bold uppercase tracking-widest">Create</span>
     </div>
-    <div class="text-muted mx-3 py-2.5 px-5 flex items-center space-x-3 cursor-pointer hover:bg-surface-highest rounded-full transition-all">
+    <div id="navArchive" onclick="setPage('archive')" class="text-muted mx-3 py-2.5 px-5 flex items-center space-x-3 cursor-pointer hover:bg-surface-highest rounded-full transition-all">
       <span class="material-symbols-outlined text-sm">inventory_2</span>
       <span class="text-xs font-bold uppercase tracking-widest">Archive</span>
     </div>
@@ -74,7 +74,7 @@ body { font-family: 'Inter', sans-serif; }
 <main class="ml-60 h-screen flex flex-col">
   <!-- Top Bar -->
   <header class="fixed top-0 left-60 right-0 h-16 bg-black/80 backdrop-blur-xl z-40 flex justify-between items-center px-10 border-b border-surface-highest">
-    <span class="text-accent text-sm font-bold uppercase tracking-widest">Dashboard</span>
+    <span id="pageTitle" class="text-accent text-sm font-bold uppercase tracking-widest">Dashboard</span>
     <div class="flex items-center space-x-4">
       <span id="liveTimer" class="text-muted text-xs font-mono tabular-nums hidden">0:00</span>
       <span id="liveStatus" class="text-muted text-xs hidden"></span>
@@ -85,7 +85,7 @@ body { font-family: 'Inter', sans-serif; }
   <div class="mt-16 flex-1 overflow-y-auto px-10 py-8">
 
     <!-- Hero Grid -->
-    <div class="grid grid-cols-12 gap-6 mb-10">
+    <div id="sectionHero" class="grid grid-cols-12 gap-6 mb-10">
 
       <!-- Create Card -->
       <section class="col-span-12 lg:col-span-7 bg-surface-low rounded-xl p-7 relative overflow-hidden">
@@ -237,12 +237,26 @@ body { font-family: 'Inter', sans-serif; }
       </section>
     </div>
 
-    <!-- Projects Library -->
-    <section>
+    <!-- Projects Library (Dashboard) -->
+    <section id="sectionRecent">
       <div class="flex items-center justify-between mb-6">
         <h3 class="text-xl font-black uppercase tracking-tight">Recent <span class="text-accent">Work</span></h3>
       </div>
       <div id="projectsContainer" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+        <p class="text-muted text-sm col-span-full">Loading...</p>
+      </div>
+    </section>
+
+    <!-- Archive (completed projects only) -->
+    <section id="sectionArchive" class="hidden">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h3 class="text-xl font-black uppercase tracking-tight">Completed <span class="text-accent">Reels</span></h3>
+          <p class="text-muted text-xs mt-1">All finished videos — ready to download or share.</p>
+        </div>
+        <span id="archiveCount" class="text-muted text-xs font-bold uppercase tracking-widest"></span>
+      </div>
+      <div id="archiveContainer" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
         <p class="text-muted text-sm col-span-full">Loading...</p>
       </div>
     </section>
@@ -647,9 +661,111 @@ async function deleteProject(id) {
   if (!confirm(`Delete "${id}" and all files?`)) return;
   try {
     const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
-    if (res.ok) loadProjects();
-    else showError("Delete failed");
+    if (res.ok) {
+      if (_currentPage === "archive") loadArchive();
+      else loadProjects();
+    } else showError("Delete failed");
   } catch (e) { showError("Delete failed: " + e.message); }
+}
+
+// ---------------------------------------------------------------------------
+// Navigation — Dashboard / Create / Archive
+// ---------------------------------------------------------------------------
+let _currentPage = "dashboard";
+
+function setPage(page) {
+  _currentPage = page;
+
+  // Nav active styles
+  const navItems = { dashboard: "navDashboard", create: "navCreate", archive: "navArchive" };
+  Object.entries(navItems).forEach(([key, id]) => {
+    const el = document.getElementById(id);
+    if (key === page) {
+      el.className = "bg-accent text-black rounded-full mx-3 py-2.5 px-5 flex items-center space-x-3 cursor-pointer transition-all";
+    } else {
+      el.className = "text-muted mx-3 py-2.5 px-5 flex items-center space-x-3 cursor-pointer hover:bg-surface-highest rounded-full transition-all";
+    }
+  });
+
+  // Section visibility
+  const hero    = document.getElementById("sectionHero");
+  const recent  = document.getElementById("sectionRecent");
+  const archive = document.getElementById("sectionArchive");
+
+  if (page === "dashboard") {
+    hero.classList.remove("hidden");
+    recent.classList.remove("hidden");
+    archive.classList.add("hidden");
+    document.getElementById("pageTitle").textContent = "Dashboard";
+    loadProjects();
+  } else if (page === "create") {
+    hero.classList.remove("hidden");
+    recent.classList.add("hidden");
+    archive.classList.add("hidden");
+    document.getElementById("pageTitle").textContent = "Create";
+    // Focus the search input and reset to search state
+    goToSearch();
+    setTimeout(() => document.getElementById("searchQuery").focus(), 50);
+  } else if (page === "archive") {
+    hero.classList.add("hidden");
+    recent.classList.add("hidden");
+    archive.classList.remove("hidden");
+    document.getElementById("pageTitle").textContent = "Archive";
+    loadArchive();
+  }
+}
+
+async function loadArchive() {
+  const container = document.getElementById("archiveContainer");
+  const countEl   = document.getElementById("archiveCount");
+  container.innerHTML = `<p class="text-muted text-sm col-span-full">Loading...</p>`;
+
+  const res      = await fetch("/api/projects");
+  const projects = await res.json();
+  const done     = projects.filter(p => p.has_video)
+                           .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+
+  countEl.textContent = done.length ? `${done.length} video${done.length !== 1 ? "s" : ""}` : "";
+
+  if (!done.length) {
+    container.innerHTML = `<p class="text-muted text-sm col-span-full">No completed videos yet. Head to Create to make your first reel.</p>`;
+    return;
+  }
+
+  container.innerHTML = done.map(p => {
+    const displayTitle  = p.script_title || p.topic;
+    const date          = p.created_at ? p.created_at.slice(0, 10) : "\u2014";
+    const elapsed       = p.pipeline_elapsed_sec ? formatElapsed(p.pipeline_elapsed_sec) : "";
+    const escapedTitle  = displayTitle.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+    const thumb         = `/api/thumbnail/${p.id}`;
+
+    return `<div class="bg-surface-container rounded-lg p-4 flex flex-col space-y-3 hover:bg-surface-high transition-colors group">
+      <div class="h-36 rounded-lg overflow-hidden relative cursor-pointer" style="background-image:url('${thumb}'); background-size:cover; background-position:center;" onclick="previewProject('${p.id}','${escapedTitle}'); setPage('dashboard');">
+        <div class="absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity">
+          <span class="material-symbols-outlined text-white/70 text-3xl">play_circle</span>
+        </div>
+        <div class="absolute top-2 right-2"><span class="bg-green-600/90 text-white text-[10px] font-black px-2 py-0.5 rounded tracking-widest uppercase">Ready</span></div>
+        ${elapsed ? `<div class="absolute bottom-2 left-2 bg-black/70 text-[10px] text-muted px-2 py-0.5 rounded font-mono">${elapsed}</div>` : ""}
+      </div>
+      <div class="flex justify-between items-start">
+        <div class="flex-1 min-w-0 mr-3">
+          <h4 class="font-bold text-sm leading-tight truncate">${displayTitle}</h4>
+          <p class="text-[10px] text-muted mt-0.5">${date} · ${p.duration_min} min</p>
+        </div>
+        <div class="flex space-x-1.5 shrink-0">
+          <button onclick="previewProject('${p.id}','${escapedTitle}'); setPage('dashboard');" class="p-1.5 bg-surface-highest hover:bg-accent hover:text-black rounded-full transition-all" title="Play">
+            <span class="material-symbols-outlined text-sm">play_arrow</span>
+          </button>
+          <a href="/api/video/${p.id}" download="${p.id}.mp4" class="p-1.5 bg-surface-highest hover:bg-white hover:text-black rounded-full transition-all inline-flex" title="Download">
+            <span class="material-symbols-outlined text-sm">download</span>
+          </a>
+          <button onclick="deleteProject('${p.id}')" class="p-1.5 bg-surface-highest hover:bg-err hover:text-white rounded-full transition-all" title="Delete">
+            <span class="material-symbols-outlined text-sm">delete</span>
+          </button>
+        </div>
+      </div>
+    </div>`;
+  }).join("");
 }
 
 // Allow Enter key in search box to trigger search
